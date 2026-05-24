@@ -15,6 +15,28 @@ curl -fsSL https://raw.githubusercontent.com/jephersonRD/JiruHub/main/jiru-insta
 irm https://raw.githubusercontent.com/jephersonRD/JiruHub/main/jiru-install/install.ps1 | iex
 ```
 
+## Dependencias del Sistema
+
+El instalador detecta automáticamente tu distribución e instala las dependencias
+necesarias (gtk3, mpv). Si ya están instaladas, las salta.
+
+| Distribución | Comando |
+|---|---|
+| Arch Linux / derivados | `pacman -S gtk3 mpv` |
+| Debian / Ubuntu / derivados | `apt-get install libgtk-3-0 mpv` |
+| Fedora / RHEL / derivados | `dnf install gtk3 mpv` |
+| openSUSE | `zypper install gtk3 mpv` |
+
+Si el instalador no detecta tu distribución, te mostrará un aviso para que
+instales las dependencias manualmente.
+
+### Instalación nativa en Arch Linux (PKGBUILD)
+
+```bash
+cd jiru-install
+makepkg -si
+```
+
 ## Assets esperados en GitHub Releases
 
 El instalador busca automáticamente estos assets en la última release:

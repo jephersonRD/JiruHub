@@ -1,0 +1,73 @@
+# Maintainer: JiruHub <jephersonRD>
+# PKGBUILD for JiruHub binary release
+
+pkgname=jiruhub-bin
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="JiruHub - Anime, manga and multimedia player (binary release)"
+arch=('x86_64')
+url="https://github.com/jephersonRD/JiruHub"
+license=('MIT')
+depends=(
+    'gtk3'
+    'mpv'
+    'libx11'
+    'libxrandr'
+    'libxinerama'
+    'libxcursor'
+    'libxcomposite'
+    'libxdamage'
+    'libxfixes'
+    'libxext'
+    'libxrender'
+    'libxi'
+    'pango'
+    'cairo'
+    'glib2'
+    'libpulse'
+    'alsa-lib'
+)
+provides=('jiruhub')
+conflicts=('jiruhub')
+source=("https://github.com/jephersonRD/JiruHub/releases/download/v${pkgver}/JiruHub-v${pkgver}-linux-x64.tar.gz")
+sha256sums=('SKIP')
+noextract=("${pkgname}-${pkgver}-linux-x64.tar.gz")
+
+package() {
+    tar -xzf "${srcdir}/JiruHub-v${pkgver}-linux-x64.tar.gz" -C "${pkgdir}"
+
+    install -Dm755 "${pkgdir}/bundle/jiruhub" "${pkgdir}/usr/bin/jiruhub"
+
+    install -d "${pkgdir}/opt/jiruhub"
+    cp -r "${pkgdir}/bundle/data" "${pkgdir}/opt/jiruhub/data"
+    cp -r "${pkgdir}/bundle/lib" "${pkgdir}/opt/jiruhub/lib"
+    install -Dm644 "${pkgdir}/bundle/icon.png" "${pkgdir}/usr/share/pixmaps/jiruhub.png"
+
+    rm -rf "${pkgdir}/bundle"
+
+    install -Dm644 /dev/stdin "${pkgdir}/usr/share/applications/jiruhub.desktop" <<EOF
+[Desktop Entry]
+Name=JiruHub
+Comment=Anime, manga and multimedia player
+Exec=/usr/bin/jiruhub
+Icon=jiruhub
+Terminal=false
+Type=Application
+Categories=AudioVideo;Player;Network;
+StartupWMClass=jiruhub
+EOF
+
+    install -Dm644 /dev/stdin "${pkgdir}/usr/share/metainfo/jiruhub.appdata.xml" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop">
+  <id>com.jiruhub.app</id>
+  <name>JiruHub</name>
+  <summary>Anime, manga and multimedia player</summary>
+  <url>https://github.com/jephersonRD/JiruHub</url>
+  <project_license>MIT</project_license>
+  <description>
+    <p>JiruHub is a custom modified version of Miru App, optimized for the Spanish-speaking community.</p>
+  </description>
+</component>
+EOF
+}

@@ -105,6 +105,18 @@ declare -A I18N_ES=(
     [cancelled]="Operación cancelada."
     [log_path]="Log guardado en"
     [running]="ejecuta: jiruhub"
+    [dep_title]="Dependencias del Sistema"
+    [dep_installed]="ya instalado"
+    [dep_required]="Se requiere:"
+    [dep_installing]="Instalando"
+    [dep_ok]="instalado correctamente"
+    [dep_fail]="Error instalando"
+    [dep_distro_unknown]="No se pudo detectar tu distribución automáticamente."
+    [dep_manual_list]="Asegúrate de tener instalado:"
+    [dep_sudo]="Verificando acceso sudo..."
+    [dep_sudo_fail]="Se requiere sudo para instalar dependencias."
+    [dep_skip]="Continuar de todas formas"
+    [dep_continue]="Continuar"
 )
 
 declare -A I18N_EN=(
@@ -136,6 +148,18 @@ declare -A I18N_EN=(
     [cancelled]="Operation cancelled."
     [log_path]="Log saved at"
     [running]="run: jiruhub"
+    [dep_title]="System Dependencies"
+    [dep_installed]="already installed"
+    [dep_required]="Required:"
+    [dep_installing]="Installing"
+    [dep_ok]="installed successfully"
+    [dep_fail]="Error installing"
+    [dep_distro_unknown]="Could not detect your distribution automatically."
+    [dep_manual_list]="Make sure you have installed:"
+    [dep_sudo]="Verifying sudo access..."
+    [dep_sudo_fail]="sudo is required to install dependencies."
+    [dep_skip]="Continue anyway"
+    [dep_continue]="Continue"
 )
 
 LANG_CODE="es"
@@ -190,6 +214,108 @@ detect_arch() {
         armv7l)        echo "arm" ;;
         *)             die "Arquitectura no soportada: $arch" ;;
     esac
+}
+
+# ─── Detección de Distribución ───────────────────────────────────────────────
+detect_distro() {
+    if [[ -f /etc/os-release ]]; then
+        . /etc/os-release
+        echo "$ID" | tr '[:upper:]' '[:lower:]'
+    elif [[ -f /etc/arch-release ]]; then
+        echo "arch"
+    elif [[ -f /etc/debian_version ]]; then
+        echo "debian"
+    elif [[ -f /etc/fedora-release ]]; then
+        echo "fedora"
+    else
+        echo "unknown"
+    fi
+}
+
+# ─── Gestión de Dependencias ──────────────────────────────────────────────
+check_dependencies() {
+    local distro="$1"
+
+    print "\n${C_DIM}┌─ $(t dep_title) ──────────────────────────────────────────────────┐${C_RESET}"
+
+    local -a pkg_names=()
+    local -a pkg_check=()
+    local -a pkg_install=()
+
+    case "$distro" in
+        arch|manjaro|endeavouros|artix|garuda)
+            pkg_names=("gtk3" "mpv")
+            pkg_check=("pacman -Qs '^gtk3$'" "pacman -Qs '^mpv$'")
+            pkg_install=("sudo pacman -S --noconfirm gtk3" "sudo pacman -S --noconfirm mpv")
+            ;;
+        debian|ubuntu|linuxmint|pop|elementary|zorin|neon|kali)
+            pkg_names=("libgtk-3-0" "mpv")
+            pkg_check=("dpkg -s libgtk-3-0 2>/dev/null" "dpkg -s mpv 2>/dev/null")
+            pkg_install=("sudo apt-get install -y libgtk-3-0" "sudo apt-get install -y mpv")
+            ;;
+        fedora|rhel|centos|rocky|alma)
+            pkg_names=("gtk3" "mpv")
+            pkg_check=("rpm -q gtk3 2>/dev/null" "rpm -q mpv 2>/dev/null")
+            pkg_install=("sudo dnf install -y gtk3" "sudo dnf install -y mpv")
+            ;;
+        suse|opensuse*)
+            pkg_names=("gtk3" "mpv")
+            pkg_check=("rpm -q gtk3 2>/dev/null" "rpm -q mpv 2>/dev/null")
+            pkg_install=("sudo zypper install -y gtk3 mpv")
+            ;;
+        *)
+            print ""
+            warn "$(t dep_distro_unknown)"
+            info "$(t dep_manual_list)"
+            info "  • gtk3 (o libgtk-3-0)"
+            info "  • mpv"
+            print ""
+            read -rp "  $(t dep_skip) [s/N]: " confirm </dev/tty || true
+            print "\n${C_DIM}└──────────────────────────────────────────────────────────────────────────┘${C_RESET}"
+            [[ "$confirm" =~ ^[Ss]$ ]] && return 0 || return 1
+            ;;
+    esac
+
+    info "$(t dep_sudo)"
+    if ! sudo -v 2>/dev/null; then
+        error "$(t dep_sudo_fail)"
+        print "\n${C_DIM}└──────────────────────────────────────────────────────────────────────────┘${C_RESET}"
+        return 1
+    fi
+
+    local errors=0
+    for i in "${!pkg_names[@]}"; do
+        local pkg="${pkg_names[$i]}"
+        print ""
+        if eval "${pkg_check[$i]}" >/dev/null 2>&1; then
+            success "$(printf '%-25s' "$pkg") $(t dep_installed)"
+        else
+            warn "$(t dep_required) $(printf '%-25s' "$pkg")"
+            info "$(t dep_installing) ${pkg}..."
+            log "Installing dependency: $pkg"
+
+            (
+                eval "${pkg_install[$i]}" >/dev/null 2>&1
+            ) &
+            local pid=$!
+            spinner $pid "$(t dep_installing) ${pkg}..."
+
+            if wait $pid 2>/dev/null; then
+                success "$(printf '%-25s' "$pkg") $(t dep_ok)"
+            else
+                error "$(t dep_fail) $(printf '%-25s' "$pkg")"
+                ((errors++))
+            fi
+        fi
+    done
+
+    print "\n${C_DIM}└──────────────────────────────────────────────────────────────────────────┘${C_RESET}"
+
+    if [[ $errors -gt 0 ]]; then
+        error "$(t dep_fail): $errors dependencia(s). Revísalas manualmente."
+        return 1
+    fi
+    return 0
 }
 
 check_internet() {
@@ -312,7 +438,7 @@ do_install() {
     show_banner
     check_internet
 
-    local os arch release_json asset_url tag_name tmpdir
+    local os arch distro release_json asset_url tag_name tmpdir
 
     print "\n${C_DIM}┌─ $(t detecting_os) ────────────────────────────────────┐${C_RESET}"
     os=$(detect_os)
@@ -322,6 +448,11 @@ do_install() {
     arch=$(detect_arch)
     info "Arch: $arch"
     sleep 0.3
+
+    if [[ "$os" == "linux" ]]; then
+        distro=$(detect_distro)
+        check_dependencies "$distro" || exit 1
+    fi
 
     print "\n${C_DIM}┌─ $(t fetching_release) ──────────────────────────────┐${C_RESET}"
     local _tmp
