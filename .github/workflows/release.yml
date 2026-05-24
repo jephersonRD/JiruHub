@@ -1,0 +1,150 @@
+# This is a basic workflow to help you get started with Actions
+
+name: Release CI
+
+on:
+  push:
+    tags:
+      - v*
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  generate-changelog:
+    # needs: ["build-and-release-android", "build-and-release-windows"]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+          ref: main
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 16.x
+      - run: npx changelogithub
+        env:
+          GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
+
+  # This workflow contains a single job called "build"
+  build-and-release-android:
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - uses: actions/checkout@v3
+        with:
+          ref: main
+      - name: Flutter action
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.16.8
+          channel: stable
+      - name: Decode keystore
+        run: |
+          echo $ENCODED_KEYSTORE | base64 -di > android/app/keystore.jks
+        env:
+          ENCODED_KEYSTORE: ${{ secrets.KEYSTORE }}
+
+      - run: flutter pub get
+      # 打包apk
+      - name: Collect Apks
+        run: flutter build apk --release --split-per-abi -v
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD}}
+
+      # 发布安装包
+      - name: Upload Artifact - armeabi-v7a
+        uses: actions/upload-artifact@v3
+        with:
+          path: "build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk"
+          name: Miru-${{github.ref_name}}-armeabi-v7a.apk
+      - name: Upload Artifact - arm64-v8a
+        uses: actions/upload-artifact@v3
+        with:
+          path: "build/app/outputs/flutter-apk/app-arm64-v8a-release.apk"
+          name: Miru-${{github.ref_name}}-arm64-v8a.apk
+      - name: Upload Artifact - x86
+        uses: actions/upload-artifact@v3
+        with:
+          path: "build/app/outputs/flutter-apk/app-x86_64-release.apk"
+          name: Miru-${{github.ref_name}}-x86_64.apk
+      - name: Release Packages
+        uses: ncipollo/release-action@v1
+        with:
+          artifacts: "build/app/outputs/flutter-apk/app-*.apk"
+          allowUpdates: true
+          omitBody: true
+
+  build-and-release-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          ref: main
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.16.8
+          channel: stable
+      - name: Install dependencies
+        run: sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libmpv-dev mpv
+      - name: Install project dependencies
+        run: flutter pub get
+      - name: Build artifacts
+        run: flutter build linux --release
+      - name: Package bundle
+        run: |
+          cd build/linux/x64/release/bundle
+          tar -czf ../../../../../JiruHub-${{ github.ref_name }}-linux.tar.gz .
+      - name: Release Packages
+        uses: ncipollo/release-action@v1
+        with:
+          artifacts: "JiruHub-${{ github.ref_name }}-linux.tar.gz"
+          allowUpdates: true
+          omitBody: true
+
+  build-and-release-windows:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          ref: main
+      - uses: subosito/flutter-action@v2.12.0
+        with:
+          flutter-version: 3.16.8
+          channel: stable
+      - name: Install project dependencies
+        run: flutter pub get
+      - name: Build artifacts
+        run: flutter build windows --release -v
+      - name: Build Installer
+        run: iex ("& {0} {1} {2}" -f '"C:\Program Files (x86)\Inno Setup 6\iscc.exe"',"/DMyAppVersion='${{github.ref_name}}'", ".\inno_setup.iss")
+      - name: Archive Release
+        uses: thedoctor0/zip-release@master
+        with:
+          type: "zip"
+          filename: Miru-${{github.ref_name}}-windows.zip
+          directory: build/windows/x64/runner/Release
+      - name: Rename Release Directory Name to Miru-App # For Artifacts.
+        # 但是此处将压缩出来的包迁移到了一个临时 temp 目录，这是用来上传到 Release Assets 的
+        # 再下面的重命名是为了 Artifacts 的
+        run: |
+          mkdir temp
+          mv build/windows/x64/runner/Release/Miru-${{github.ref_name}}-windows.zip temp/Miru-${{github.ref_name}}-windows.zip
+          mv build/windows/x64/runner/Release build/windows/x64/runner/Miru-App
+      # 发布安装包
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          path: "build/windows/x64/runner/Miru-App"
+          name: Miru-pr-${{ github.event.pull_request.number }}-windows.zip
+      - name: Release Packages
+        uses: ncipollo/release-action@v1
+        with:
+          artifacts: "temp/Miru-${{github.ref_name}}-windows.zip,Output/*.exe"
+          allowUpdates: true
+          omitBody: true
