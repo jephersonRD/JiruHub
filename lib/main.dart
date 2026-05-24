@@ -20,8 +20,16 @@ import 'package:jiruhub/utils/jiruhub_storage.dart';
 import 'package:jiruhub/utils/application.dart';
 import 'package:jiruhub/views/widgets/platform_widget.dart';
 import 'package:window_manager/window_manager.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 void main(List<String> args) async {
+  if (args.contains('-version') || args.contains('--version')) {
+    WidgetsFlutterBinding.ensureInitialized();
+    final info = await PackageInfo.fromPlatform();
+    print('JiruHub v${info.version}');
+    exit(0);
+  }
+
   runZonedGuarded(() async {
     FlutterError.onError = (FlutterErrorDetails details) {
       logger.severe("", details.exception, details.stack);
