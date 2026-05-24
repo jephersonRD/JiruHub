@@ -377,7 +377,7 @@ do_install() {
     ln -sf "$binary" "${BIN_DIR}/jiruhub"
     info "Symlink: ${BIN_DIR}/jiruhub → $binary"
 
-    create_desktop_entry "$binary" "${INSTALL_DIR}/data/flutter_assets/assets/icon/logo.png"
+    create_desktop_entry "$binary" "${INSTALL_DIR}/icon.png"
     info "Acceso directo creado."
 
     echo "$tag_name" > "$VERSION_FILE"
