@@ -165,7 +165,7 @@ function Show-MainMenu {
             "2" { Invoke-Update; break }
             "3" { Invoke-Uninstall; break }
             "4" { exit 0 }
-            default { Warn T('invalid_option') }
+            default { Warn $(T('invalid_option')) }
         }
     }
 }
@@ -183,7 +183,7 @@ function Get-Arch {
 
 function Test-Internet {
     try { Invoke-WebRequest -Uri "https://api.github.com" -Method Head -TimeoutSec 5 | Out-Null }
-    catch { Die T('no_internet') }
+    catch { Die $(T('no_internet')) }
 }
 
 function Get-LatestRelease {
@@ -208,7 +208,7 @@ function Find-Asset($os, $arch, $assets) {
 
 # ─── Descarga ──────────────────────────────────────────────────────────────
 function Download-File($url, $outPath) {
-    Info T('downloading')
+    Info $(T('downloading'))
     $req = [System.Net.HttpWebRequest]::Create($url)
     $resp = $req.GetResponse()
     $total = $resp.ContentLength
@@ -265,7 +265,7 @@ function Invoke-Install {
     Start-Sleep -Milliseconds 300
 
     Write-Host "`n  ${Dim}┌─ $(T('fetching_release')) ──────────────────────────────┐${Reset}"
-    $release = Show-Spinner T('fetching_release') { Get-LatestRelease }
+    $release = Show-Spinner $(T('fetching_release')) { Get-LatestRelease }
     $tag = $release.tag_name
     Info "$(T('latest_version')): ${Bold}${Green}$tag${Reset}"
 
@@ -339,7 +339,7 @@ function Invoke-Update {
     }
     Info "Nueva versión: $latest"
     Invoke-Install
-    Ok T('success_update')
+    Ok $(T('success_update'))
 }
 
 # ─── Desinstalar ─────────────────────────────────────────────────────────────
@@ -347,11 +347,13 @@ function Invoke-Uninstall {
     Show-Banner
     Write-Host "`n  ${Yellow}${Bold}  ⚠  Se eliminarán todos los archivos de JiruHub.${Reset}"
     $c = Read-Host "  ¿Continuar? [s/N]"
-    if ($c -notmatch "^[Ss]$") { Info T('cancelled'); return }
+    if ($c -notmatch "^[Ss]$") { Info $(T('cancelled')); return }
     Remove-Item $InstallDir -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item "$StartMenuDir\JiruHub.lnk" -Force -ErrorAction SilentlyContinue
     Remove-Item $LogDir -Recurse -Force -ErrorAction SilentlyContinue
-    Ok T('success_uninstall')
+    Remove-Item "$env:ProgramFiles\JiruHub" -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item "${env:ProgramFiles(x86)}\JiruHub" -Recurse -Force -ErrorAction SilentlyContinue
+    Ok $(T('success_uninstall'))
     Read-Host "  $(T('press_enter'))"
 }
 
