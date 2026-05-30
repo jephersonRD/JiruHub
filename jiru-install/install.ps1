@@ -144,28 +144,28 @@ function Select-Language {
     Write-Host ""
     Write-Host "  [1] Español"
     Write-Host "  [2] English"
-    Write-Host "  [3] $($T('opt_exit'))"
+    Write-Host "  [3] $(T('opt_exit'))"
     Write-Host ""
-    $c = Read-Host "  $($T('choose_option'))"
+    $c = Read-Host "  $(T('choose_option'))"
     switch ($c) { "1" { $script:Lang = "es" } "2" { $script:Lang = "en" } "3" { exit 0 } }
 }
 
 function Show-MainMenu {
     while ($true) {
         Show-Banner
-        Write-Host "  ${Bold}${Cyan}◆ $($T('menu_main')) ◆${Reset}`n"
-        Write-Host "  [1] $($T('opt_install'))"
-        Write-Host "  [2] $($T('opt_update'))"
-        Write-Host "  [3] $($T('opt_uninstall'))"
-        Write-Host "  [4] ${Red}$($T('opt_exit'))${Reset}"
+        Write-Host "  ${Bold}${Cyan}◆ $(T('menu_main')) ◆${Reset}`n"
+        Write-Host "  [1] $(T('opt_install'))"
+        Write-Host "  [2] $(T('opt_update'))"
+        Write-Host "  [3] $(T('opt_uninstall'))"
+        Write-Host "  [4] ${Red}$(T('opt_exit'))${Reset}"
         Write-Host ""
-        $c = Read-Host "  $($T('choose_option'))"
+        $c = Read-Host "  $(T('choose_option'))"
         switch ($c) {
             "1" { Invoke-Install; break }
             "2" { Invoke-Update; break }
             "3" { Invoke-Uninstall; break }
             "4" { exit 0 }
-            default { Warn $T('invalid_option') }
+            default { Warn T('invalid_option') }
         }
     }
 }
@@ -183,7 +183,7 @@ function Get-Arch {
 
 function Test-Internet {
     try { Invoke-WebRequest -Uri "https://api.github.com" -Method Head -TimeoutSec 5 | Out-Null }
-    catch { Die $T('no_internet') }
+    catch { Die T('no_internet') }
 }
 
 function Get-LatestRelease {
@@ -193,9 +193,9 @@ function Get-LatestRelease {
 
 function Find-Asset($os, $arch, $assets) {
     $patterns = switch ($arch) {
-        "x64"   { @("JiruHub-*-windows-x64.zip", "JiruHub-*-windows.zip") }
+        "x64"   { @("JiruHub-*-windows-x64.zip", "JiruHub-*-windows.zip", "JiruHub-*-windows-setup.exe") }
         "arm64" { @("JiruHub-*-windows-arm64.zip") }
-        default { @("JiruHub-*-windows.zip") }
+        default { @("JiruHub-*-windows.zip", "JiruHub-*-windows-setup.exe") }
     }
     foreach ($p in $patterns) {
         $pat = "^" + [regex]::Escape($p).Replace("\*", ".*") + "$"
@@ -208,7 +208,7 @@ function Find-Asset($os, $arch, $assets) {
 
 # ─── Descarga ──────────────────────────────────────────────────────────────
 function Download-File($url, $outPath) {
-    Info $T('downloading')
+    Info T('downloading')
     $req = [System.Net.HttpWebRequest]::Create($url)
     $resp = $req.GetResponse()
     $total = $resp.ContentLength
@@ -255,7 +255,7 @@ function Invoke-Install {
     Show-Banner
     Test-Internet
 
-    Write-Host "`n  ${Dim}┌─ $($T('detecting_os')) ────────────────────────────────────┐${Reset}"
+    Write-Host "`n  ${Dim}┌─ $(T('detecting_os')) ────────────────────────────────────┐${Reset}"
     $os = Get-OS
     Info "OS: $os"
     Start-Sleep -Milliseconds 300
@@ -264,10 +264,10 @@ function Invoke-Install {
     Info "Arch: $arch"
     Start-Sleep -Milliseconds 300
 
-    Write-Host "`n  ${Dim}┌─ $($T('fetching_release')) ──────────────────────────────┐${Reset}"
-    $release = Show-Spinner $T('fetching_release') { Get-LatestRelease }
+    Write-Host "`n  ${Dim}┌─ $(T('fetching_release')) ──────────────────────────────┐${Reset}"
+    $release = Show-Spinner T('fetching_release') { Get-LatestRelease }
     $tag = $release.tag_name
-    Info "$($T('latest_version')): ${Bold}${Green}$tag${Reset}"
+    Info "$(T('latest_version')): ${Bold}${Green}$tag${Reset}"
 
     $asset = Find-Asset $os $arch $release.assets
     if (-not $asset) { Die "No se encontró asset para $os ($arch). Revisa GitHub Releases." }
@@ -279,16 +279,16 @@ function Invoke-Install {
 
     Download-WithRetry $asset.browser_download_url $zipPath
 
-    Write-Host "`n  ${Dim}┌─ $($T('installing')) ───────────────────────────────────┐${Reset}"
+    Write-Host "`n  ${Dim}┌─ $(T('installing')) ───────────────────────────────────┐${Reset}"
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 
     Expand-Archive -Path $zipPath -DestinationPath $tmp -Force
 
     $bundleDir = $tmp
     Get-ChildItem $tmp -Directory | ForEach-Object {
-        if (Test-Path "$($_.FullName)\jiruhub.exe" -PathType Leaf -or
-            Test-Path "$($_.FullName)\JiruHub.exe" -PathType Leaf -or
-            Test-Path "$($_.FullName)\miru.exe" -PathType Leaf) {
+        if ((Test-Path "$($_.FullName)\jiruhub.exe" -PathType Leaf) -or
+            (Test-Path "$($_.FullName)\JiruHub.exe" -PathType Leaf) -or
+            (Test-Path "$($_.FullName)\miru.exe" -PathType Leaf)) {
             $bundleDir = $_.FullName
         }
     }
@@ -310,15 +310,15 @@ function Invoke-Install {
     Write-Host ""
     Write-Host "${Green}${Bold}  ╔══════════════════════════════════════════════════╗${Reset}"
     Write-Host "${Green}${Bold}  ║                                                  ║${Reset}"
-    Write-Host "${Green}${Bold}  ║     $($T('success_install'))              ║${Reset}"
+    Write-Host "${Green}${Bold}  ║     $(T('success_install'))              ║${Reset}"
     Write-Host "${Green}${Bold}  ║                                                  ║${Reset}"
     Write-Host "${Green}${Bold}  ╚══════════════════════════════════════════════════╝${Reset}"
     Write-Host ""
-    Write-Host "  ${Bold}$($T('installed_version')):${Reset}  ${Cyan}$tag${Reset}"
-    Write-Host "  ${Bold}$($T('install_path')):${Reset}       ${Cyan}$InstallDir${Reset}"
-    Write-Host "  ${Bold}$($T('log_path')):${Reset}         ${Cyan}$LogFile${Reset}"
+    Write-Host "  ${Bold}$(T('installed_version')):${Reset}  ${Cyan}$tag${Reset}"
+    Write-Host "  ${Bold}$(T('install_path')):${Reset}       ${Cyan}$InstallDir${Reset}"
+    Write-Host "  ${Bold}$(T('log_path')):${Reset}         ${Cyan}$LogFile${Reset}"
     Write-Host ""
-    Read-Host "  $($T('press_enter'))"
+    Read-Host "  $(T('press_enter'))"
 }
 
 # ─── Actualizar ──────────────────────────────────────────────────────────────
@@ -334,12 +334,12 @@ function Invoke-Update {
     $release = Get-LatestRelease
     $latest = $release.tag_name
     if ($current -eq $latest) {
-        Ok "$($T('already_latest')) ($current)"
-        Read-Host "  $($T('press_enter'))"; return
+        Ok "$(T('already_latest')) ($current)"
+        Read-Host "  $(T('press_enter'))"; return
     }
     Info "Nueva versión: $latest"
     Invoke-Install
-    Ok $T('success_update')
+    Ok T('success_update')
 }
 
 # ─── Desinstalar ─────────────────────────────────────────────────────────────
@@ -347,12 +347,12 @@ function Invoke-Uninstall {
     Show-Banner
     Write-Host "`n  ${Yellow}${Bold}  ⚠  Se eliminarán todos los archivos de JiruHub.${Reset}"
     $c = Read-Host "  ¿Continuar? [s/N]"
-    if ($c -notmatch "^[Ss]$") { Info $T('cancelled'); return }
+    if ($c -notmatch "^[Ss]$") { Info T('cancelled'); return }
     Remove-Item $InstallDir -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item "$StartMenuDir\JiruHub.lnk" -Force -ErrorAction SilentlyContinue
     Remove-Item $LogDir -Recurse -Force -ErrorAction SilentlyContinue
-    Ok $T('success_uninstall')
-    Read-Host "  $($T('press_enter'))"
+    Ok T('success_uninstall')
+    Read-Host "  $(T('press_enter'))"
 }
 
 # ─── Entry Point ───────────────────────────────────────────────────────────
@@ -366,5 +366,5 @@ try {
 } catch {
     Err "Error: $_"
     Write-Log "FATAL: $_"
-    Read-Host "  $($T('press_enter'))"
+    Read-Host "  $(T('press_enter'))"
 }
