@@ -96,10 +96,10 @@ function Write-Log($msg) {
     "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') $msg" | Out-File $LogFile -Append -Encoding UTF8
 }
 
-function Info($m)  { Write-Host "  ${Blue}ℹ${Reset}  $m"; Write-Log "INFO: $m" }
-function Ok($m)    { Write-Host "  ${Green}✔${Reset}  $m"; Write-Log "OK: $m" }
-function Warn($m)  { Write-Host "  ${Yellow}⚠${Reset}  $m"; Write-Log "WARN: $m" }
-function Err($m)   { Write-Host "  ${Red}✖${Reset}  $m"; Write-Log "ERR: $m" }
+function Info($m)  { Write-Host "  ${Blue}[i]${Reset}  $m"; Write-Log "INFO: $m" }
+function Ok($m)    { Write-Host "  ${Green}[OK]${Reset}  $m"; Write-Log "OK: $m" }
+function Warn($m)  { Write-Host "  ${Yellow}[!]${Reset}  $m"; Write-Log "WARN: $m" }
+function Err($m)   { Write-Host "  ${Red}[X]${Reset}  $m"; Write-Log "ERR: $m" }
 function Die($m)   { Err $m; Read-Host "  $(T press_enter)"; exit 1 }
 
 function Show-Banner {
@@ -345,7 +345,7 @@ function Invoke-Update {
 # ─── Desinstalar ─────────────────────────────────────────────────────────────
 function Invoke-Uninstall {
     Show-Banner
-    Write-Host "`n  ${Yellow}${Bold}  ⚠  Se eliminarán todos los archivos de JiruHub.${Reset}"
+    Write-Host "`n  ${Yellow}${Bold}  [!]  Se eliminarán todos los archivos de JiruHub.${Reset}"
     $c = Read-Host "  ¿Continuar? [s/N]"
     if ($c -notmatch "^[Ss]$") { Info $(T('cancelled')); return }
     Remove-Item $InstallDir -Recurse -Force -ErrorAction SilentlyContinue

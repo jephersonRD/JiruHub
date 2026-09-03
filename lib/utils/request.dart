@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:cookie_jar/cookie_jar.dart';
 import 'package:dio/dio.dart';
 import 'package:dio_cookie_manager/dio_cookie_manager.dart';
@@ -16,11 +18,40 @@ class MiruRequest {
   static bool _isInitialized = false;
 
   static Future<void> ensureInitialized() async {
+    _loadSystemCertificates();
     dio = Dio();
     final cookieManager = CookieManager(_cookieJar);
     dio.interceptors.add(cookieManager);
     refreshProxy();
     _isInitialized = true;
+  }
+
+  // Dart's BoringSSL solo busca las rutas de CA al estilo Debian, asi que en
+  // Fedora/openSUSE/Alpine toda peticion HTTPS muere con
+  // CERTIFICATE_VERIFY_FAILED. Le indicamos el bundle de la distro.
+  static void _loadSystemCertificates() {
+    if (!Platform.isLinux) {
+      return;
+    }
+    final candidates = [
+      if (Platform.environment['SSL_CERT_FILE'] != null)
+        Platform.environment['SSL_CERT_FILE']!,
+      '/etc/ssl/certs/ca-certificates.crt', // Debian, Ubuntu, Fedora (compat)
+      '/etc/pki/tls/certs/ca-bundle.crt', // RHEL, CentOS
+      '/etc/ssl/ca-bundle.pem', // openSUSE
+      '/etc/ssl/cert.pem', // Alpine, Arch
+    ];
+    for (final path in candidates) {
+      if (!File(path).existsSync()) {
+        continue;
+      }
+      try {
+        SecurityContext.defaultContext.setTrustedCertificates(path);
+        return;
+      } on TlsException {
+        // Bundle ilegible o ya cargado: probamos el siguiente candidato.
+      }
+    }
   }
 
   static refreshProxy() {

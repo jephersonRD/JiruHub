@@ -32,7 +32,7 @@ class ExtensionRepoPageController extends GetxController {
 
     try {
       final url = '${JiruHubStorage.getSetting(SettingKey.jiruhubRepoUrl)}/index.json';
-      debugPrint('🔍 Extension repo URL: $url');
+      debugPrint('Extension repo URL: $url');
       final res = await dio.get<String>(url);
       extensions = jsonDecode(res.data!);
       if (!JiruHubStorage.getSetting(SettingKey.enableNSFW)) {
@@ -42,7 +42,7 @@ class ExtensionRepoPageController extends GetxController {
       extensionsTemp.addAll(extensions);
     } catch (e) {
       isError.value = true;
-      debugPrint('❌ Extension repo error: ${e.toString()}');
+      debugPrint('Extension repo error: ${e.toString()}');
     } finally {
       isLoading.value = false;
     }

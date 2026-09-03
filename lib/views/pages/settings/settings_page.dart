@@ -599,7 +599,7 @@ class _SettingsPageState extends State<SettingsPage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const SelectableText(
-              "🎉 JiruHub - A versatile application that is free, open-source, and supports extension sources for videos, comics, and novels, available on Android, Windows, Linux and Web platforms.",
+              "JiruHub - A versatile application that is free, open-source, and supports extension sources for videos, comics, and novels, available on Android, Windows, Linux and Web platforms.",
             ),
             const SizedBox(height: 20),
             Text(

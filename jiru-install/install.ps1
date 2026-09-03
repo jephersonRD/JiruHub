@@ -436,7 +436,7 @@ function Invoke-Install {
     Write-Host ""
     Write-Host "  ${Green}${Bold}╔══════════════════════════════════════════════════════╗${Reset}"
     Write-Host "  ${Green}${Bold}║                                                      ║${Reset}"
-    Write-Host "  ${Green}${Bold}║   ✔  $(T 'success_install')                  ║${Reset}"
+    Write-Host "  ${Green}${Bold}║   [OK]  $(T 'success_install')               ║${Reset}"
     Write-Host "  ${Green}${Bold}║                                                      ║${Reset}"
     Write-Host "  ${Green}${Bold}╚══════════════════════════════════════════════════════╝${Reset}"
     Write-Host ""
@@ -488,7 +488,7 @@ function Invoke-Update {
 function Invoke-Uninstall {
     Show-Banner
     Write-Host ""
-    Write-Host "  ${Yellow}${Bold}  ⚠  Se eliminarán todos los archivos de JiruHub.${Reset}"
+    Write-Host "  ${Yellow}${Bold}  [!]  Se eliminarán todos los archivos de JiruHub.${Reset}"
     Write-Host "  ${Dim}Ruta: $InstallDir${Reset}"
     Write-Host ""
     $c = Read-Host "  ¿Continuar? [s/N]"
