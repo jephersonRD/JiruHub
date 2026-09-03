@@ -54,6 +54,7 @@ show_banner() {
 spinner() {
     local pid=$1 msg="$2" delay=0.1
     local spin='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+    local i
     while kill -0 "$pid" 2>/dev/null; do
         for i in $(seq 0 9); do
             printf "\r${C_CYAN}%s${C_RESET}  %s" "${spin:$i:1}" "$msg"
@@ -279,57 +280,67 @@ check_dependencies() {
     local -a pkg_names=()
     local -a pkg_check=()
     local -a pkg_install=()
+    # "1" = opcional: si falla se avisa, pero no aborta la instalacion.
+    local -a pkg_optional=()
 
     case "$distro" in
         # ── Arch Linux y derivadas ────────────────────────────────────────────
         arch|manjaro|endeavouros|artix|garuda|cachyos|arcolinux|crystal|\
 archlabs|archcraft|parabola|hyperbola|blackarch)
-            pkg_names=("gtk3" "mpv" "libx11")
-            pkg_check=("pacman -Qs '^gtk3$'" "ldconfig -p | grep -q 'libmpv\.so\.2'" "pacman -Qs '^libx11$'")
-            pkg_install=("sudo pacman -S --noconfirm gtk3" "sudo pacman -S --noconfirm mpv" "sudo pacman -S --noconfirm libx11")
+            pkg_names=("gtk3" "libmpv" "libx11" "mpv (opcional)")
+            pkg_check=("pacman -Qs '^gtk3$'" "ldconfig -p | grep 'libmpv\.so\.2' >/dev/null" "pacman -Qs '^libx11$'" "command -v mpv >/dev/null 2>&1")
+            pkg_install=("sudo pacman -S --noconfirm gtk3" "sudo pacman -S --noconfirm mpv" "sudo pacman -S --noconfirm libx11" "sudo pacman -S --noconfirm mpv")
+            pkg_optional=("" "" "" "1")
             ;;
         # ── Debian / Ubuntu y derivadas ───────────────────────────────────────
         debian|ubuntu|linuxmint|pop|elementary|zorin|neon|kali|\
 raspbian|mx|antix|pureos|tails|parrot|deepin|backbox)
-            pkg_names=("libgtk-3-0" "libmpv2" "libx11-6")
-            pkg_check=("dpkg -s libgtk-3-0 2>/dev/null" "ldconfig -p | grep -q 'libmpv\.so\.2'" "dpkg -s libx11-6 2>/dev/null")
-            pkg_install=("sudo apt-get install -y libgtk-3-0" "sudo apt-get install -y libmpv2 || sudo apt-get install -y libmpv1" "sudo apt-get install -y libx11-6")
+            pkg_names=("libgtk-3-0" "libmpv2" "libx11-6" "mpv (opcional)")
+            pkg_check=("dpkg -s libgtk-3-0 2>/dev/null" "ldconfig -p | grep 'libmpv\.so\.2' >/dev/null" "dpkg -s libx11-6 2>/dev/null" "command -v mpv >/dev/null 2>&1")
+            pkg_install=("sudo apt-get install -y libgtk-3-0" "sudo apt-get install -y libmpv2 || sudo apt-get install -y libmpv1" "sudo apt-get install -y libx11-6" "sudo apt-get install -y mpv")
+            pkg_optional=("" "" "" "1")
             ;;
         # ── Fedora / RHEL y derivadas ─────────────────────────────────────────
         fedora|rhel|centos|rocky|alma|nobara|ultramarine|mageia|openmandriva)
-            pkg_names=("gtk3" "mpv-libs")
-            pkg_check=("rpm -q gtk3 2>/dev/null" "ldconfig -p | grep -q 'libmpv\.so\.2'")
-            pkg_install=("sudo dnf install -y gtk3" "sudo dnf install -y mpv-libs")
+            pkg_names=("gtk3" "mpv-libs" "mpv (opcional)")
+            pkg_check=("rpm -q gtk3 2>/dev/null" "ldconfig -p | grep 'libmpv\.so\.2' >/dev/null" "command -v mpv >/dev/null 2>&1")
+            pkg_install=("sudo dnf install -y gtk3" "sudo dnf install -y mpv-libs" "sudo dnf install -y mpv")
+            pkg_optional=("" "" "1")
             ;;
         # ── openSUSE ──────────────────────────────────────────────────────────
         opensuse|suse)
-            pkg_names=("libgtk-3-0" "libmpv2")
-            pkg_check=("rpm -q libgtk-3-0 2>/dev/null" "ldconfig -p | grep -q 'libmpv\.so\.2'")
-            pkg_install=("sudo zypper install -y libgtk-3-0 libmpv2")
+            pkg_names=("libgtk-3-0" "libmpv2" "mpv (opcional)")
+            pkg_check=("rpm -q libgtk-3-0 2>/dev/null" "ldconfig -p | grep 'libmpv\.so\.2' >/dev/null" "command -v mpv >/dev/null 2>&1")
+            pkg_install=("sudo zypper install -y libgtk-3-0 libmpv2" "sudo zypper install -y mpv")
+            pkg_optional=("" "" "1")
             ;;
         # ── Void Linux ────────────────────────────────────────────────────────
         void)
-            pkg_names=("gtk+3" "libmpv")
-            pkg_check=("xbps-query gtk+3 2>/dev/null" "ldconfig -p | grep -q 'libmpv\.so\.2'")
-            pkg_install=("sudo xbps-install -Sy gtk+3" "sudo xbps-install -Sy libmpv")
+            pkg_names=("gtk+3" "libmpv" "mpv (opcional)")
+            pkg_check=("xbps-query gtk+3 2>/dev/null" "ldconfig -p | grep 'libmpv\.so\.2' >/dev/null" "command -v mpv >/dev/null 2>&1")
+            pkg_install=("sudo xbps-install -Sy gtk+3" "sudo xbps-install -Sy libmpv" "sudo xbps-install -Sy mpv")
+            pkg_optional=("" "" "1")
             ;;
         # ── Alpine Linux ──────────────────────────────────────────────────────
         alpine)
-            pkg_names=("gtk+3.0" "mpv-libs")
-            pkg_check=("apk info gtk+3.0 2>/dev/null" "ldconfig -p | grep -q 'libmpv\.so\.2'")
-            pkg_install=("sudo apk add --no-cache gtk+3.0" "sudo apk add --no-cache mpv-libs")
+            pkg_names=("gtk+3.0" "mpv-libs" "mpv (opcional)")
+            pkg_check=("apk info gtk+3.0 2>/dev/null" "ldconfig -p | grep 'libmpv\.so\.2' >/dev/null" "command -v mpv >/dev/null 2>&1")
+            pkg_install=("sudo apk add --no-cache gtk+3.0" "sudo apk add --no-cache mpv-libs" "sudo apk add --no-cache mpv")
+            pkg_optional=("" "" "1")
             ;;
         # ── Gentoo / Funtoo ───────────────────────────────────────────────────
         gentoo)
-            pkg_names=("x11-libs/gtk+" "media-video/mpv")
-            pkg_check=("equery list gtk+ 2>/dev/null" "ldconfig -p | grep -q 'libmpv\.so\.2'")
-            pkg_install=("sudo emerge -av x11-libs/gtk+" "sudo emerge -av media-video/mpv")
+            pkg_names=("x11-libs/gtk+" "libmpv" "mpv (opcional)")
+            pkg_check=("equery list gtk+ 2>/dev/null" "ldconfig -p | grep 'libmpv\.so\.2' >/dev/null" "command -v mpv >/dev/null 2>&1")
+            pkg_install=("sudo emerge -av x11-libs/gtk+" "sudo emerge -av media-video/mpv" "sudo emerge -av media-video/mpv")
+            pkg_optional=("" "" "1")
             ;;
         # ── Solus ─────────────────────────────────────────────────────────────
         solus)
-            pkg_names=("libgtk-3" "mpv")
-            pkg_check=("eopkg info libgtk-3 2>/dev/null" "ldconfig -p | grep -q 'libmpv\.so\.2'")
-            pkg_install=("sudo eopkg install -y libgtk-3" "sudo eopkg install -y mpv")
+            pkg_names=("libgtk-3" "libmpv" "mpv (opcional)")
+            pkg_check=("eopkg info libgtk-3 2>/dev/null" "ldconfig -p | grep 'libmpv\.so\.2' >/dev/null" "command -v mpv >/dev/null 2>&1")
+            pkg_install=("sudo eopkg install -y libgtk-3" "sudo eopkg install -y mpv" "sudo eopkg install -y mpv")
+            pkg_optional=("" "" "1")
             ;;
         # ── NixOS ─────────────────────────────────────────────────────────────
         nixos)
@@ -384,9 +395,11 @@ raspbian|mx|antix|pureos|tails|parrot|deepin|backbox)
 
             if wait $pid 2>/dev/null; then
                 success "$(printf '%-25s' "$pkg") $(t dep_ok)"
+            elif [[ -n "${pkg_optional[$i]:-}" ]]; then
+                warn "$(printf '%-25s' "$pkg") no se pudo instalar (opcional, se continua)"
             else
                 error "$(t dep_fail) $(printf '%-25s' "$pkg")"
-                ((errors++))
+                errors=$((errors + 1))
             fi
         fi
     done
