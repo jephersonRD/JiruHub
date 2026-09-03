@@ -95,6 +95,22 @@ jobs:
         run: flutter pub get
       - name: Build artifacts
         run: flutter build linux --release
+      # flutter_js carga libquickjs_c_bridge_plugin.so por dart:ffi en tiempo de
+      # ejecucion, pero su CMake no siempre la agrega a PLUGIN_BUNDLED_LIBRARIES.
+      # Sin ella la app revienta al iniciar o al instalar una extension, y hasta
+      # ahora el release se publicaba roto en silencio.
+      - name: Ensure QuickJS bridge is bundled
+        run: |
+          BUNDLE_LIB=build/linux/x64/release/bundle/lib
+          if [ ! -f "$BUNDLE_LIB/libquickjs_c_bridge_plugin.so" ]; then
+            SRC=$(find build/linux -name libquickjs_c_bridge_plugin.so -print -quit)
+            if [ -z "$SRC" ]; then
+              echo "::error::libquickjs_c_bridge_plugin.so no se construyo; el release seria inservible."
+              exit 1
+            fi
+            cp "$SRC" "$BUNDLE_LIB/"
+          fi
+          ls -1 "$BUNDLE_LIB"
       - name: Package bundle
         run: |
           cd build/linux/x64/release/bundle

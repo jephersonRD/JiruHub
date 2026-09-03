@@ -31,7 +31,10 @@ class ExtensionRepoPageController extends GetxController {
     isError.value = false;
 
     try {
-      final url = '${JiruHubStorage.getSetting(SettingKey.jiruhubRepoUrl)}/index.json';
+      final base = JiruHubStorage.getSetting(SettingKey.jiruhubRepoUrl)
+          .toString()
+          .replaceFirst(RegExp(r'/*(index\.json)?/*$'), '');
+      final url = '$base/index.json';
       debugPrint('Extension repo URL: $url');
       final res = await dio.get<String>(url);
       extensions = jsonDecode(res.data!);

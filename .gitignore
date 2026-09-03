@@ -58,3 +58,8 @@ Web/node_modules/
 
 # IDE
 .idea/
+
+# Firma Android: nunca commitear
+*.jks
+*.keystore
+android/key.properties

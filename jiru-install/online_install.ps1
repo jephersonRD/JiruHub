@@ -115,21 +115,6 @@ function Show-Banner {
     Write-Host ""
 }
 
-function Show-Spinner($msg, $sb) {
-    $spin = "⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"
-    $job = Start-Job -ScriptBlock $sb
-    $i = 0
-    while ($job.State -eq "Running") {
-        Write-Host "`r  $($spin[$i%10])  $msg" -NoNewline -ForegroundColor Cyan
-        $i++
-        Start-Sleep -Milliseconds 100
-    }
-    Write-Host "`r$(' ' * 60)`r" -NoNewline
-    $r = Receive-Job $job
-    Remove-Job $job
-    return $r
-}
-
 function Show-ProgressBar($pct) {
     $w = 40
     $f = [math]::Floor($pct * $w / 100)
@@ -265,7 +250,7 @@ function Invoke-Install {
     Start-Sleep -Milliseconds 300
 
     Write-Host "`n  ${Dim}┌─ $(T('fetching_release')) ──────────────────────────────┐${Reset}"
-    $release = Show-Spinner $(T('fetching_release')) { Get-LatestRelease }
+    $release = Get-LatestRelease
     $tag = $release.tag_name
     Info "$(T('latest_version')): ${Bold}${Green}$tag${Reset}"
 
