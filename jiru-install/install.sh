@@ -16,6 +16,7 @@ APP_DIR="${HOME}/.local/share/applications"
 LOG_DIR="${HOME}/.local/share/JiruHub/logs"
 LOG_FILE="${LOG_DIR}/installer-$(date +%Y%m%d-%H%M%S).log"
 VERSION_FILE="${INSTALL_DIR}/version"
+DEPS_FILE="${INSTALL_DIR}/.deps-instaladas"
 
 # ─── Colores ANSI ──────────────────────────────────────────────────────────
 if [[ -t 1 ]]; then
@@ -30,10 +31,10 @@ fi
 # ─── Utilidades ────────────────────────────────────────────────────────────
 log() { mkdir -p "$LOG_DIR"; echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG_FILE"; }
 print() { echo -e "$*"; }
-info() { print "${C_BLUE}ℹ${C_RESET}  $*"; log "INFO: $*"; }
-success() { print "${C_GREEN}✔${C_RESET}  $*"; log "SUCCESS: $*"; }
-warn() { print "${C_YELLOW}⚠${C_RESET}  $*"; log "WARN: $*"; }
-error() { print "${C_RED}✖${C_RESET}  $*"; log "ERROR: $*"; }
+info() { print "${C_BLUE}[i]${C_RESET}  $*"; log "INFO: $*"; }
+success() { print "${C_GREEN}[OK]${C_RESET}  $*"; log "SUCCESS: $*"; }
+warn() { print "${C_YELLOW}[!]${C_RESET}  $*"; log "WARN: $*"; }
+error() { print "${C_RED}[X]${C_RESET}  $*"; log "ERROR: $*"; }
 die() { error "$*"; exit 1; }
 
 # ─── Banner ──────────────────────────────────────────────────────────────────
@@ -54,6 +55,7 @@ show_banner() {
 spinner() {
     local pid=$1 msg="$2" delay=0.1
     local spin='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+    local i
     while kill -0 "$pid" 2>/dev/null; do
         for i in $(seq 0 9); do
             printf "\r${C_CYAN}%s${C_RESET}  %s" "${spin:$i:1}" "$msg"
@@ -115,6 +117,23 @@ declare -A I18N_ES=(
     [dep_manual_list]="Asegúrate de tener instalado:"
     [dep_sudo]="Verificando acceso sudo..."
     [dep_sudo_fail]="Se requiere sudo para instalar dependencias."
+    [dep_refreshing]="Actualizando indices de paquetes..."
+    [dep_optional]="opcional"
+    [dep_plan]="Se ejecutaran estos comandos como root:"
+    [dep_confirm]="Continuar?"
+    [dep_noninteractive]="Sin terminal interactiva: se continua sin pedir confirmacion."
+    [uninst_deps]="El instalador habia puesto estas dependencias:"
+    [uninst_deps_ask]="Eliminarlas tambien?"
+    [uninst_deps_kept]="Se conservan las dependencias."
+    [uninst_deps_fail]="No se pudieron eliminar; hacelo a mano si hace falta."
+    [dep_declined]="Instalacion cancelada. JiruHub necesita estas librerias para arrancar:"
+    [dep_optional_why]="solo para el reproductor externo"
+    [dep_declined_hint]="Instalalas cuando quieras y volve a ejecutar el instalador:"
+    [dep_retry]="Reintentando con los nombres de paquete antiguos..."
+    [dep_optional_fail]="no se pudo instalar; se continua sin el reproductor externo."
+    [dep_nixos]="NixOS detectado. Instala las dependencias de forma declarativa:"
+    [dep_pm_unknown]="No se reconocio el gestor de paquetes. Instala a mano:"
+    [dep_refresh_fail]="No se pudieron actualizar los indices; se intenta instalar igual."
     [dep_skip]="Continuar de todas formas"
     [dep_continue]="Continuar"
 )
@@ -158,6 +177,23 @@ declare -A I18N_EN=(
     [dep_manual_list]="Make sure you have installed:"
     [dep_sudo]="Verifying sudo access..."
     [dep_sudo_fail]="sudo is required to install dependencies."
+    [dep_refreshing]="Refreshing package indexes..."
+    [dep_optional]="optional"
+    [dep_plan]="These commands will run as root:"
+    [dep_confirm]="Continue?"
+    [dep_noninteractive]="No interactive terminal: continuing without asking."
+    [uninst_deps]="The installer had added these dependencies:"
+    [uninst_deps_ask]="Remove them too?"
+    [uninst_deps_kept]="Keeping the dependencies."
+    [uninst_deps_fail]="Could not remove them; do it manually if needed."
+    [dep_declined]="Installation cancelled. JiruHub needs these libraries to start:"
+    [dep_optional_why]="only for the external player"
+    [dep_declined_hint]="Install them whenever you want and run the installer again:"
+    [dep_retry]="Retrying with the older package names..."
+    [dep_optional_fail]="could not be installed; continuing without the external player."
+    [dep_nixos]="NixOS detected. Install the dependencies declaratively:"
+    [dep_pm_unknown]="Could not recognise the package manager. Install manually:"
+    [dep_refresh_fail]="Could not refresh indexes; trying to install anyway."
     [dep_skip]="Continue anyway"
     [dep_continue]="Continue"
 )
@@ -222,141 +258,104 @@ detect_arch() {
 }
 
 # ─── Detección de Distribución ───────────────────────────────────────────────
-detect_distro() {
-    local distro_id="unknown"
-    if [[ -f /etc/os-release ]]; then
-        local os_id os_id_like
-        os_id=$(grep '^ID=' /etc/os-release | cut -d= -f2 | tr -d '"' | tr '[:upper:]' '[:lower:]')
-        os_id_like=$(grep '^ID_LIKE=' /etc/os-release | cut -d= -f2 | tr -d '"' | tr '[:upper:]' '[:lower:]')
-        distro_id="${os_id:-unknown}"
+detect_pkg_manager() {
+    local m
+    for m in pacman xbps-install apk eopkg emerge zypper dnf yum apt-get nix-env; do
+        if command -v "$m" >/dev/null 2>&1; then
+            echo "$m"
+            return 0
+        fi
+    done
+    echo "unknown"
+}
 
-        # Normalise known IDs to their package-manager family
-        case "$distro_id" in
-            arch|manjaro|endeavouros|artix|garuda|cachyos|arcolinux|crystal|\
-            hyperbola|parabola|blackarch|archcraft|archlabs) ;; # already fine
-            ubuntu|debian|linuxmint|pop|elementary|zorin|neon|kali|\
-            raspbian|mx|antix|pureos|tails|parrot|deepin|backbox|\
-            vanilla-*) ;; # already fine
-            fedora|rhel|centos|rocky|alma|nobara|ultramarine|mageia|\
-            openmandriva|springdale) ;; # already fine
-            opensuse*|suse*) distro_id="opensuse" ;;
-            void) ;;
-            alpine) ;;
-            gentoo|funtoo) distro_id="gentoo" ;;
-            nixos) distro_id="nixos" ;;
-            solus) ;;
-            *)
-                # Fallback: look at ID_LIKE to find the package-manager family
-                for like in $os_id_like; do
-                    case "$like" in
-                        arch)   distro_id="arch"   ; break ;;
-                        debian|ubuntu) distro_id="debian" ; break ;;
-                        fedora|rhel)   distro_id="fedora" ; break ;;
-                        opensuse|suse) distro_id="opensuse" ; break ;;
-                        void)   distro_id="void"   ; break ;;
-                        alpine) distro_id="alpine" ; break ;;
-                        gentoo) distro_id="gentoo" ; break ;;
-                    esac
-                done
-                ;;
-        esac
-    elif [[ -f /etc/arch-release ]];   then distro_id="arch"
-    elif [[ -f /etc/debian_version ]]; then distro_id="debian"
-    elif [[ -f /etc/fedora-release ]]; then distro_id="fedora"
-    elif [[ -f /etc/void-release ]];   then distro_id="void"
-    elif [[ -f /etc/alpine-release ]]; then distro_id="alpine"
-    elif [[ -f /etc/gentoo-release ]]; then distro_id="gentoo"
+has_lib() {
+    local so="$1" d
+    if ldconfig -p 2>/dev/null | grep "$so" >/dev/null; then
+        return 0
     fi
-    echo "$distro_id"
+    for d in /usr/lib64 /usr/lib /lib64 /lib /usr/lib/x86_64-linux-gnu /usr/lib/aarch64-linux-gnu; do
+        [[ -e "$d/$so" ]] && return 0
+    done
+    return 1
 }
 
 # ─── Gestión de Dependencias ──────────────────────────────────────────────
 check_dependencies() {
-    local distro="$1"
+    local pm="$1"
 
     print "\n${C_DIM}┌─ $(t dep_title) ──────────────────────────────────────────────────┐${C_RESET}"
 
-    local -a pkg_names=()
-    local -a pkg_check=()
-    local -a pkg_install=()
-
-    case "$distro" in
-        # ── Arch Linux y derivadas ────────────────────────────────────────────
-        arch|manjaro|endeavouros|artix|garuda|cachyos|arcolinux|crystal|\
-archlabs|archcraft|parabola|hyperbola|blackarch)
-            pkg_names=("gtk3" "mpv" "libx11")
-            pkg_check=("pacman -Qs '^gtk3$'" "pacman -Qs '^mpv$'" "pacman -Qs '^libx11$'")
-            pkg_install=("sudo pacman -S --noconfirm gtk3" "sudo pacman -S --noconfirm mpv" "sudo pacman -S --noconfirm libx11")
-            ;;
-        # ── Debian / Ubuntu y derivadas ───────────────────────────────────────
-        debian|ubuntu|linuxmint|pop|elementary|zorin|neon|kali|\
-raspbian|mx|antix|pureos|tails|parrot|deepin|backbox)
-            pkg_names=("libgtk-3-0" "mpv" "libx11-6")
-            pkg_check=("dpkg -s libgtk-3-0 2>/dev/null" "dpkg -s mpv 2>/dev/null" "dpkg -s libx11-6 2>/dev/null")
-            pkg_install=("sudo apt-get install -y libgtk-3-0" "sudo apt-get install -y mpv" "sudo apt-get install -y libx11-6")
-            ;;
-        # ── Fedora / RHEL y derivadas ─────────────────────────────────────────
-        fedora|rhel|centos|rocky|alma|nobara|ultramarine|mageia|openmandriva)
-            pkg_names=("gtk3" "mpv")
-            pkg_check=("rpm -q gtk3 2>/dev/null" "rpm -q mpv 2>/dev/null")
-            pkg_install=("sudo dnf install -y gtk3" "sudo dnf install -y mpv")
-            ;;
-        # ── openSUSE ──────────────────────────────────────────────────────────
-        opensuse|suse)
-            pkg_names=("libgtk-3-0" "mpv")
-            pkg_check=("rpm -q libgtk-3-0 2>/dev/null" "rpm -q mpv 2>/dev/null")
-            pkg_install=("sudo zypper install -y libgtk-3-0 mpv")
-            ;;
-        # ── Void Linux ────────────────────────────────────────────────────────
-        void)
-            pkg_names=("gtk+3" "mpv")
-            pkg_check=("xbps-query gtk+3 2>/dev/null" "xbps-query mpv 2>/dev/null")
-            pkg_install=("sudo xbps-install -Sy gtk+3" "sudo xbps-install -Sy mpv")
-            ;;
-        # ── Alpine Linux ──────────────────────────────────────────────────────
-        alpine)
-            pkg_names=("gtk+3.0" "mpv")
-            pkg_check=("apk info gtk+3.0 2>/dev/null" "apk info mpv 2>/dev/null")
-            pkg_install=("sudo apk add --no-cache gtk+3.0" "sudo apk add --no-cache mpv")
-            ;;
-        # ── Gentoo / Funtoo ───────────────────────────────────────────────────
-        gentoo)
-            pkg_names=("x11-libs/gtk+" "media-video/mpv")
-            pkg_check=("equery list gtk+ 2>/dev/null" "equery list mpv 2>/dev/null")
-            pkg_install=("sudo emerge -av x11-libs/gtk+" "sudo emerge -av media-video/mpv")
-            ;;
-        # ── Solus ─────────────────────────────────────────────────────────────
-        solus)
-            pkg_names=("libgtk-3" "mpv")
-            pkg_check=("eopkg info libgtk-3 2>/dev/null" "eopkg info mpv 2>/dev/null")
-            pkg_install=("sudo eopkg install -y libgtk-3" "sudo eopkg install -y mpv")
-            ;;
-        # ── NixOS ─────────────────────────────────────────────────────────────
-        nixos)
+    local req="" opt="" cmd="" refresh="" fallback="" uncmd=""
+    case "$pm" in
+        pacman)       req="gtk3 mpv libx11";                         opt="mpv"; cmd="sudo pacman -S --noconfirm";  refresh="sudo pacman -Sy --noconfirm"; uncmd="sudo pacman -Rs --noconfirm" ;;
+        apt-get)      req="libgtk-3-0 libmpv2 libx11-6";             opt="mpv"; cmd="sudo apt-get install -y";     refresh="sudo apt-get update"; fallback="libgtk-3-0 libmpv1 libx11-6"; uncmd="sudo apt-get remove -y" ;;
+        dnf|yum)      req="gtk3 mpv-libs libX11";                    opt="mpv"; cmd="sudo $pm install -y"; uncmd="sudo $pm remove -y" ;;
+        zypper)       req="libgtk-3-0 libmpv2 libX11-6";             opt="mpv"; cmd="sudo zypper install -y";      refresh="sudo zypper --non-interactive refresh"; uncmd="sudo zypper --non-interactive remove" ;;
+        apk)          req="gtk+3.0 mpv-libs libx11";                 opt="mpv"; cmd="sudo apk add --no-cache";     refresh="sudo apk update"; uncmd="sudo apk del" ;;
+        xbps-install) req="gtk+3 libmpv libX11";                     opt="mpv"; cmd="sudo xbps-install -Sy"; uncmd="sudo xbps-remove -Ry" ;;
+        emerge)       req="x11-libs/gtk+ media-video/mpv x11-libs/libX11"; opt=""; cmd="sudo emerge --verbose"; uncmd="sudo emerge --unmerge" ;;
+        eopkg)        req="libgtk-3 mpv libx11";                     opt="mpv"; cmd="sudo eopkg install -y";       refresh="sudo eopkg update-repo"; uncmd="sudo eopkg remove -y" ;;
+        nix-env)
             print ""
-            warn "NixOS detectado."
-            info "En NixOS instala las dependencias con nix-env o en configuration.nix:"
-            info "  nix-env -iA nixpkgs.gtk3 nixpkgs.mpv"
-            info "O agrega a configuration.nix: environment.systemPackages = [ pkgs.gtk3 pkgs.mpv ];"
-            print ""
-            read -rp "  $(t dep_skip) [s/N]: " confirm </dev/tty || true
+            warn "$(t dep_nixos)"
+            info "  environment.systemPackages = [ pkgs.gtk3 pkgs.mpv pkgs.xorg.libX11 ];"
             print "\n${C_DIM}└──────────────────────────────────────────────────────────────────────────┘${C_RESET}"
-            [[ "$confirm" =~ ^[Ss]$ ]] && return 0 || return 1
+            return 0
             ;;
-        # ── Distro desconocida ────────────────────────────────────────────────
         *)
             print ""
-            warn "$(t dep_distro_unknown)"
-            info "$(t dep_manual_list)"
-            info "  • gtk3 (libgtk-3-0 en sistemas Debian/Ubuntu)"
-            info "  • mpv"
-            info "  • libx11"
-            print ""
-            read -rp "  $(t dep_skip) [s/N]: " confirm </dev/tty || true
+            warn "$(t dep_pm_unknown)"
+            info "  libgtk-3, libmpv (libmpv.so.2), libX11${opt:+, mpv}"
             print "\n${C_DIM}└──────────────────────────────────────────────────────────────────────────┘${C_RESET}"
-            [[ "$confirm" =~ ^[Ss]$ ]] && return 0 || return 1
+            return 0
             ;;
     esac
+
+    local libs_ok=0
+    has_lib libgtk-3.so.0 && has_lib libmpv.so.2 && has_lib libX11.so.6 && libs_ok=1
+
+    local mpv_ok=0
+    command -v mpv >/dev/null 2>&1 && mpv_ok=1
+
+    if [[ $libs_ok -eq 1 && $mpv_ok -eq 1 ]]; then
+        print ""
+        success "libgtk-3, libmpv, libX11, mpv  $(t dep_installed)"
+        print "\n${C_DIM}└──────────────────────────────────────────────────────────────────────────┘${C_RESET}"
+        return 0
+    fi
+
+    print ""
+    [[ $libs_ok -eq 0 ]] && warn "$(t dep_required) libgtk-3, libmpv, libX11"
+    [[ $mpv_ok -eq 0 ]]  && warn "$(t dep_required) mpv ($(t dep_optional))"
+
+    print ""
+    info "$(t dep_plan)"
+    [[ -n "$refresh" ]] && print "  ${C_DIM}\$ ${refresh}${C_RESET}"
+    [[ $libs_ok -eq 0 ]] && print "  ${C_DIM}\$ ${cmd} ${req}${C_RESET}"
+    [[ $mpv_ok -eq 0 && -n "$opt" ]] && print "  ${C_DIM}\$ ${cmd} ${opt}${C_RESET}"
+
+    print ""
+    local reply=""
+    if { : </dev/tty; } 2>/dev/null; then
+        read -rp "  $(t dep_confirm) [S/n]: " reply </dev/tty || reply=""
+    else
+        print ""
+        warn "$(t dep_noninteractive)"
+    fi
+    if [[ "$reply" =~ ^[NnKk] ]]; then
+        print ""
+        warn "$(t dep_declined)"
+        info "  libgtk-3   ->  libgtk-3.so.0"
+        info "  libmpv     ->  libmpv.so.2"
+        info "  libX11     ->  libX11.so.6"
+        [[ -n "$opt" ]] && info "  mpv        ->  $(t dep_optional), $(t dep_optional_why)"
+        print ""
+        info "$(t dep_declined_hint)"
+        print "  ${C_DIM}\$ ${cmd} ${req}${C_RESET}"
+        print "\n${C_DIM}└──────────────────────────────────────────────────────────────────────────┘${C_RESET}"
+        return 1
+    fi
 
     info "$(t dep_sudo)"
     if ! sudo -v 2>/dev/null; then
@@ -365,38 +364,55 @@ raspbian|mx|antix|pureos|tails|parrot|deepin|backbox)
         return 1
     fi
 
-    local errors=0
-    for i in "${!pkg_names[@]}"; do
-        local pkg="${pkg_names[$i]}"
+    if [[ -n "$refresh" ]]; then
         print ""
-        if eval "${pkg_check[$i]}" >/dev/null 2>&1; then
-            success "$(printf '%-25s' "$pkg") $(t dep_installed)"
-        else
-            warn "$(t dep_required) $(printf '%-25s' "$pkg")"
-            info "$(t dep_installing) ${pkg}..."
-            log "Installing dependency: $pkg"
+        info "$(t dep_refreshing)"
+        log "refresh: $refresh"
+        eval "$refresh" || warn "$(t dep_refresh_fail)"
+    fi
 
-            (
-                eval "${pkg_install[$i]}" >/dev/null 2>&1
-            ) &
-            local pid=$!
-            spinner $pid "$(t dep_installing) ${pkg}..."
-
-            if wait $pid 2>/dev/null; then
-                success "$(printf '%-25s' "$pkg") $(t dep_ok)"
-            else
-                error "$(t dep_fail) $(printf '%-25s' "$pkg")"
-                ((errors++))
-            fi
+    if [[ $libs_ok -eq 0 ]]; then
+        print ""
+        info "$(t dep_installing) libgtk-3, libmpv, libX11"
+        log "install: $cmd $req"
+        if ! eval "$cmd $req" && [[ -n "$fallback" ]]; then
+            print ""
+            warn "$(t dep_retry)"
+            log "install fallback: $cmd $fallback"
+            eval "$cmd $fallback" || true
         fi
-    done
+    fi
 
-    print "\n${C_DIM}└──────────────────────────────────────────────────────────────────────────┘${C_RESET}"
+    if [[ $mpv_ok -eq 0 && -n "$opt" ]]; then
+        print ""
+        info "$(t dep_installing) mpv ($(t dep_optional))"
+        log "install optional: $cmd $opt"
+        eval "$cmd $opt" || warn "$(t dep_optional_fail)"
+    fi
 
-    if [[ $errors -gt 0 ]]; then
-        error "$(t dep_fail): $errors dependencia(s). Revísalas manualmente."
+    local puestos=""
+    [[ $libs_ok -eq 0 ]] && puestos=" $req"
+    [[ $mpv_ok -eq 0 && -n "$opt" ]] && puestos="$puestos $opt"
+    if [[ -n "$puestos" && -n "$uncmd" ]]; then
+        mkdir -p "$INSTALL_DIR"
+        echo "$uncmd$puestos" > "$DEPS_FILE"
+    fi
+
+    print ""
+    local missing=""
+    has_lib libgtk-3.so.0 || missing="$missing libgtk-3"
+    has_lib libmpv.so.2   || missing="$missing libmpv"
+    has_lib libX11.so.6   || missing="$missing libX11"
+
+    if [[ -n "$missing" ]]; then
+        error "$(t dep_fail):$missing"
+        print "\n${C_DIM}└──────────────────────────────────────────────────────────────────────────┘${C_RESET}"
         return 1
     fi
+
+    success "libgtk-3, libmpv, libX11  $(t dep_ok)"
+    command -v mpv >/dev/null 2>&1 || warn "mpv ($(t dep_optional)) $(t dep_optional_fail)"
+    print "\n${C_DIM}└──────────────────────────────────────────────────────────────────────────┘${C_RESET}"
     return 0
 }
 
@@ -520,7 +536,7 @@ do_install() {
     show_banner
     check_internet
 
-    local os arch distro release_json asset_url tag_name tmpdir
+    local os arch pkg_manager release_json asset_url tag_name tmpdir
 
     print "\n${C_DIM}┌─ $(t detecting_os) ────────────────────────────────────┐${C_RESET}"
     os=$(detect_os)
@@ -532,8 +548,9 @@ do_install() {
     sleep 0.3
 
     if [[ "$os" == "linux" ]]; then
-        distro=$(detect_distro)
-        check_dependencies "$distro" || exit 1
+        pkg_manager=$(detect_pkg_manager)
+        info "Gestor de paquetes: $pkg_manager"
+        check_dependencies "$pkg_manager" || exit 1
     fi
 
     print "\n${C_DIM}┌─ $(t fetching_release) ──────────────────────────────┐${C_RESET}"
@@ -637,9 +654,26 @@ do_update() {
 # ─── Desinstalar ─────────────────────────────────────────────────────────────
 do_uninstall() {
     show_banner
-    print "\n${C_YELLOW}${C_BOLD}  ⚠  Se eliminarán todos los archivos de JiruHub.${C_RESET}"
+    print "\n${C_YELLOW}${C_BOLD}  [!]  Se eliminarán todos los archivos de JiruHub.${C_RESET}"
     read -rp "  ¿Continuar? [s/N]: " confirm </dev/tty || true
     [[ "$confirm" =~ ^[Ss]$ ]] || { info "$(t cancelled)"; return; }
+    if [[ -s "$DEPS_FILE" ]]; then
+        local uncmd_saved
+        uncmd_saved=$(cat "$DEPS_FILE")
+        print ""
+        info "$(t uninst_deps)"
+        print "  ${C_DIM}\$ ${uncmd_saved}${C_RESET}"
+        print ""
+        local rmdeps=""
+        if { : </dev/tty; } 2>/dev/null; then
+            read -rp "  $(t uninst_deps_ask) [s/N]: " rmdeps </dev/tty || rmdeps=""
+        fi
+        if [[ "$rmdeps" =~ ^[Ss] ]]; then
+            eval "$uncmd_saved" || warn "$(t uninst_deps_fail)"
+        else
+            info "$(t uninst_deps_kept)"
+        fi
+    fi
     rm -rf "$INSTALL_DIR"
     rm -f "${BIN_DIR}/jiruhub"
     rm -f "${APP_DIR}/jiruhub.desktop"
