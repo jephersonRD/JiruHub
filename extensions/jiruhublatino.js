@@ -1,6 +1,6 @@
 // ==MiruExtension==
 // @name         JiruHub Latino
-// @version      v0.3.4
+// @version      v0.3.5
 // @author       jephMD
 // @lang         es
 // @license      MIT
@@ -92,13 +92,7 @@ export default class extends Extension {
     try {
       const raw = await this.request("", { headers: { "Miru-Url": API_URL } });
       const data = typeof raw === "string" ? JSON.parse(raw) : raw;
-      if (Array.isArray(data)) {
-        this.animeList = data;
-      } else if (data && Array.isArray(data.animes)) {
-        this.animeList = data.animes;
-      } else {
-        this.animeList = [];
-      }
+      this.animeList = (data && Array.isArray(data.animes)) ? data.animes : [];
       return this.animeList;
     } catch {
       this.animeList = [];
