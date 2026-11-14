@@ -1,6 +1,6 @@
 // ==JiruHubExtension==
 // @name         TioAnime
-// @version      v0.1.8
+// @version      v0.1.9
 // @author       JiruHub
 // @lang         es
 // @license      MIT
@@ -80,12 +80,12 @@ export default class extends Extension {
   _parseList(html, base) {
     const out = [];
     if (!html || typeof html !== "string") return out;
-    const blocks = html.match(/<article class="anime">[\s\S]*?<\/article>/g) || [];
+    const blocks = html.match(/<article[^>]*class="[^"]*anime[^"]*"[^>]*>[\s\S]*?<\/article>/g) || [];
     for (const block of blocks) {
       const href = (block.match(/<a[^>]+href="([^"]+)"/) || [])[1];
       if (!href) continue;
       const cover = (block.match(/<img[^>]+src="([^"]+)"/) || [])[1] || "";
-      const title = (block.match(/<h3[^>]*class="title"[^>]*>([\s\S]*?)<\/h3>/) || [])[1] || "";
+      const title = (block.match(/<h3[^>]*>([\s\S]*?)<\/h3>/) || [])[1] || "";
       const url = this._abs(base, href);
       if (!/\/anime\//.test(url)) continue;
       out.push({
@@ -125,18 +125,18 @@ export default class extends Extension {
 
   async detail(url) {
     const base = await this._base();
+    const empty = { title: "", cover: "", desc: "", episodes: [] };
+
     let html = "";
     try {
       html = await this._get(url);
     } catch (_) {
-      return { title: "", cover: "", desc: "", episodes: [] };
+      return empty;
     }
-    if (!html || typeof html !== "string") {
-      return { title: "", cover: "", desc: "", episodes: [] };
-    }
+    if (!html || typeof html !== "string") return empty;
 
     const title = this._decode(
-      (html.match(/<h1[^>]*class="title"[^>]*>([\s\S]*?)<\/h1>/) || [])[1] || ""
+      (html.match(/<h1[^>]*class="[^"]*title[^"]*"[^>]*>([\s\S]*?)<\/h1>/) || [])[1] || ""
     );
 
     const cover =
@@ -145,28 +145,44 @@ export default class extends Extension {
       "";
 
     const desc = this._decode(
-      (html.match(/<p[^>]*class="sinopsis"[^>]*>([\s\S]*?)<\/p>/) || [])[1] || ""
+      (html.match(/<p[^>]*class="[^"]*sinopsis[^"]*"[^>]*>([\s\S]*?)<\/p>/) || [])[1] || ""
     );
 
     const episodes = [];
-    const listBlock =
-      (html.match(/<ul[^>]*class="episodes-list"[^>]*>([\s\S]*?)<\/ul>/) || [])[1] || "";
-    const items = listBlock.match(/<li>[\s\S]*?<\/li>/g) || [];
-    for (const item of items) {
-      const href = (item.match(/<a[^>]+href="([^"]+)"/) || [])[1];
-      if (!href) continue;
-      const epUrl = this._abs(base, href);
-      if (!/\/ver\//.test(epUrl)) continue;
-      const label = this._decode(
-        (item.match(/<span>([\s\S]*?)<\/span>/) || [])[1] || ""
-      );
+    const seen = new Set();
+
+    const pushEp = (epUrl, label) => {
+      if (!epUrl || seen.has(epUrl)) return;
+      if (!/\/ver\//.test(epUrl)) return;
+      seen.add(epUrl);
       const num = parseInt((epUrl.match(/-(\d+)\/?$/) || [])[1], 10);
       episodes.push({
         name: label || (isNaN(num) ? "Episodio" : `Episodio ${num}`),
         url: epUrl,
         _n: isNaN(num) ? 0 : num,
       });
+    };
+
+    // 1) Enlaces reales a /ver/ (sin depender de clases CSS)
+    const linkRe = /<a[^>]+href="([^"]*\/ver\/[^"#]+)"[^>]*>([\s\S]*?)<\/a>/g;
+    let m;
+    while ((m = linkRe.exec(html)) !== null) {
+      const inner = m[2] || "";
+      const label = this._decode((inner.match(/<span[^>]*>([\s\S]*?)<\/span>/) || [])[1] || "");
+      pushEp(this._abs(base, m[1]), label);
     }
+
+    // 2) Respaldo: array interno "var episodes = [...]" + slug de anime_info
+    if (episodes.length === 0) {
+      const slug = (html.match(/var\s+anime_info\s*=\s*\[[^\]]*?,\s*"([^"]+)"/) || [])[1];
+      const arr = (html.match(/var\s+episodes\s*=\s*(\[[^\]]*\])/) || [])[1];
+      if (slug && arr) {
+        try {
+          for (const n of JSON.parse(arr)) pushEp(`${base}/ver/${slug}-${n}`, `Episodio ${n}`);
+        } catch (_) {}
+      }
+    }
+
     episodes.sort((a, b) => a._n - b._n);
 
     return {
@@ -375,8 +391,6 @@ export default class extends Extension {
   }
 
   async _watchMega(embedUrl) {
-    // Mega sirve HTML con AES-CTR; el reproductor no lo decodifica.
-    // Se devuelve el embed como último recurso y se guarda el enlace de descarga.
     const fileUrl = embedUrl.replace("/embed/", "/file/");
     return {
       type: "hls",
