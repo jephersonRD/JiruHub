@@ -1,6 +1,6 @@
 // ==JiruHubExtension==
 // @name         TioAnime
-// @version      v0.1.9
+// @version      v0.2.0
 // @author       JiruHub
 // @lang         es
 // @license      MIT
@@ -13,6 +13,20 @@
 
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
+
+// Orden de preferencia. Primero lo que entrega m3u8, luego mp4, Mega al final.
+const PRIORITY = [
+  /voe/i,
+  /ok\.?ru/i,
+  /filemoon|filemoon\.sx/i,
+  /streamtape/i,
+  /yourupload/i,
+  /mp4upload/i,
+  /dood/i,
+  /mixdrop/i,
+  /hqq|netu/i,
+  /mega/i,
+];
 
 export default class extends Extension {
   async load() {
@@ -39,498 +53,529 @@ export default class extends Extension {
     return b.replace(/\/+$/, "");
   }
 
-  async _get(pathOrUrl, referer) {
-    const base = await this._base();
-    const url = /^https?:\/\//i.test(pathOrUrl) ? pathOrUrl : base + pathOrUrl;
-    return this.request("", {
-      headers: {
-        "Miru-Url": url,
-        "User-Agent": UA,
-        "Referer": referer || base + "/",
-        "Accept": "text/html,application/xhtml+xml,*/*",
-        "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
-      },
-    });
+  _abs(url, base) {
+    const u = String(url || "").trim();
+    if (!u) return "";
+    if (/^https?:\/\//i.test(u)) return u;
+    if (u.startsWith("//")) return "https:" + u;
+    if (u.startsWith("/")) return base + u;
+    return base + "/" + u;
   }
 
-  _decode(s) {
-    return String(s == null ? "" : s)
-      .replace(/<[^>]+>/g, " ")
-      .replace(/&amp;/g, "&")
-      .replace(/&lt;/g, "<")
-      .replace(/&gt;/g, ">")
-      .replace(/&quot;/g, '"')
-      .replace(/&#0?39;/g, "'")
-      .replace(/&apos;/g, "'")
-      .replace(/&nbsp;/g, " ")
-      .replace(/&#(\d+);/g, (_, d) => String.fromCharCode(parseInt(d, 10)))
-      .replace(/\s+/g, " ")
-      .trim();
+  async _get(url, referer) {
+    const headers = {
+      "Miru-Url": url,
+      "User-Agent": UA,
+      "Accept":
+        "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,*/*;q=0.8",
+      "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
+    };
+    if (referer) headers["Referer"] = referer;
+    try {
+      return await this.request("", { headers });
+    } catch (_) {
+      return "";
+    }
   }
 
-  _abs(base, href) {
-    if (!href) return "";
-    if (/^https?:\/\//i.test(href)) return href;
-    if (href.startsWith("//")) return "https:" + href;
-    return base + (href.startsWith("/") ? href : "/" + href);
+  _refererFor(url) {
+    try {
+      const u = new URL(url);
+      if (/mega\.nz$/.test(u.hostname)) return "https://mega.nz/";
+      return u.origin + "/";
+    } catch (_) {
+      return "https://tioanime.com/";
+    }
+  }
+
+  _err(tag, extra) {
+    return { type: "hls", url: "error://" + tag, headers: extra || {} };
   }
 
   // ---------- listados ----------
 
+  async latest(page) {
+    const base = await this._base();
+    const p = Number(page) > 0 ? Number(page) : 1;
+    const html = await this._get(base + "/directorio?p=" + p, base + "/directorio");
+    return this._parseList(html, base);
+  }
+
+  async search(kw, page) {
+    const base = await this._base();
+    const p = Number(page) > 0 ? Number(page) : 1;
+    const q = encodeURIComponent(String(kw || "").trim());
+    const html = await this._get(
+      base + "/directorio?q=" + q + "&p=" + p,
+      base + "/directorio"
+    );
+    return this._parseList(html, base);
+  }
+
+  async trending(page) {
+    return this.latest(page);
+  }
+
   _parseList(html, base) {
     const out = [];
     if (!html || typeof html !== "string") return out;
-    const blocks = html.match(/<article[^>]*class="[^"]*anime[^"]*"[^>]*>[\s\S]*?<\/article>/g) || [];
+    const seen = new Set();
+    const blocks =
+      html.match(/<article[^>]*class="[^"]*anime[^"]*"[^>]*>[\s\S]*?<\/article>/gi) || [];
     for (const block of blocks) {
-      const href = (block.match(/<a[^>]+href="([^"]+)"/) || [])[1];
-      if (!href) continue;
-      const cover = (block.match(/<img[^>]+src="([^"]+)"/) || [])[1] || "";
-      const title = (block.match(/<h3[^>]*>([\s\S]*?)<\/h3>/) || [])[1] || "";
-      const url = this._abs(base, href);
-      if (!/\/anime\//.test(url)) continue;
+      const href =
+        (block.match(/href="([^"]*\/anime\/[^"]+)"/i) || [])[1] ||
+        (block.match(/href="([^"]+)"/i) || [])[1];
+      const url = this._abs(href, base);
+      if (!url || !/\/anime\//i.test(url) || seen.has(url)) continue;
+      seen.add(url);
+
+      const titleRaw =
+        (block.match(/<h3[^>]*>([\s\S]*?)<\/h3>/i) || [])[1] ||
+        (block.match(/<a[^>]*title="([^"]+)"/i) || [])[1] ||
+        "";
+      const title = this._clean(titleRaw);
+      if (!title) continue;
+
+      const coverRaw =
+        (block.match(/<img[^>]+src="([^"]+)"/i) || [])[1] ||
+        (block.match(/<img[^>]+data-src="([^"]+)"/i) || [])[1] ||
+        "";
+      const cover = this._abs(coverRaw, base);
+
+      const eps = (block.match(/<span[^>]*class="[^"]*episodes[^"]*"[^>]*>([\s\S]*?)<\/span>/i) || [])[1];
+      const type = (block.match(/<span[^>]*class="[^"]*type[^"]*"[^>]*>([\s\S]*?)<\/span>/i) || [])[1];
+
       out.push({
-        title: this._decode(title) || "Sin título",
+        title,
         url,
-        cover: this._abs(base, cover),
+        cover,
+        indicator: eps ? this._clean(eps) : "",
+        subIndicator: type ? this._clean(type) : "",
       });
     }
     return out;
   }
 
-  async latest(page) {
-    const p = parseInt(page, 10) || 1;
-    try {
-      const base = await this._base();
-      const html = await this._get(`/directorio?p=${p}`);
-      return this._parseList(html, base);
-    } catch (_) {
-      return [];
-    }
-  }
-
-  async search(kw, page) {
-    const p = parseInt(page, 10) || 1;
-    try {
-      const base = await this._base();
-      const html = await this._get(
-        `/directorio?q=${encodeURIComponent(kw || "")}&p=${p}`
-      );
-      return this._parseList(html, base);
-    } catch (_) {
-      return [];
-    }
+  _clean(s) {
+    return String(s || "")
+      .replace(/<[^>]*>/g, " ")
+      .replace(/&amp;/g, "&")
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&nbsp;/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
   }
 
   // ---------- detalle ----------
 
   async detail(url) {
     const base = await this._base();
-    const empty = { title: "", cover: "", desc: "", episodes: [] };
-
-    let html = "";
-    try {
-      html = await this._get(url);
-    } catch (_) {
-      return empty;
+    const pageUrl = this._abs(url, base);
+    const html = await this._get(pageUrl, base + "/directorio");
+    if (!html || typeof html !== "string") {
+      return { title: "", url: pageUrl, episodes: [] };
     }
-    if (!html || typeof html !== "string") return empty;
 
-    const title = this._decode(
-      (html.match(/<h1[^>]*class="[^"]*title[^"]*"[^>]*>([\s\S]*?)<\/h1>/) || [])[1] || ""
-    );
-
-    const cover =
-      (html.match(/<meta[^>]+property="og:image"[^>]+content="([^"]+)"/) || [])[1] ||
-      (html.match(/<div class="thumb">[\s\S]*?<img[^>]+src="([^"]+)"/) || [])[1] ||
+    const titleRaw =
+      (html.match(/<h1[^>]*class="[^"]*title[^"]*"[^>]*>([\s\S]*?)<\/h1>/i) || [])[1] ||
+      (html.match(/<meta[^>]+property="og:title"[^>]+content="([^"]+)"/i) || [])[1] ||
+      (html.match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1] ||
       "";
+    const title = this._clean(titleRaw).replace(/\s*-\s*TioAnime\s*$/i, "");
 
-    const desc = this._decode(
-      (html.match(/<p[^>]*class="[^"]*sinopsis[^"]*"[^>]*>([\s\S]*?)<\/p>/) || [])[1] || ""
-    );
+    const coverRaw =
+      (html.match(/<meta[^>]+property="og:image"[^>]+content="([^"]+)"/i) || [])[1] ||
+      (html.match(/<img[^>]+class="[^"]*thumb[^"]*"[^>]+src="([^"]+)"/i) || [])[1] ||
+      "";
+    const cover = this._abs(coverRaw, base);
 
+    const descRaw =
+      (html.match(/<p[^>]*class="[^"]*sinopsis[^"]*"[^>]*>([\s\S]*?)<\/p>/i) || [])[1] || "";
+    const description = this._clean(descRaw);
+
+    const statusRaw =
+      (html.match(/<span[^>]*class="[^"]*status[^"]*"[^>]*>([\s\S]*?)<\/span>/i) || [])[1] || "";
+    const status = this._clean(statusRaw);
+
+    const genres = [];
+    const genreRe = /<a[^>]+href="[^"]*\/genero\/[^"]*"[^>]*>([\s\S]*?)<\/a>/gi;
+    let gm;
+    while ((gm = genreRe.exec(html)) !== null) {
+      const g = this._clean(gm[1]);
+      if (g && !genres.includes(g)) genres.push(g);
+    }
+
+    // Episodios: cualquier enlace /ver/ del documento.
     const episodes = [];
     const seen = new Set();
-
-    const pushEp = (epUrl, label) => {
-      if (!epUrl || seen.has(epUrl)) return;
-      if (!/\/ver\//.test(epUrl)) return;
-      seen.add(epUrl);
-      const num = parseInt((epUrl.match(/-(\d+)\/?$/) || [])[1], 10);
-      episodes.push({
-        name: label || (isNaN(num) ? "Episodio" : `Episodio ${num}`),
-        url: epUrl,
-        _n: isNaN(num) ? 0 : num,
-      });
-    };
-
-    // 1) Enlaces reales a /ver/ (sin depender de clases CSS)
-    const linkRe = /<a[^>]+href="([^"]*\/ver\/[^"#]+)"[^>]*>([\s\S]*?)<\/a>/g;
+    const linkRe = /<a[^>]+href="([^"]*\/ver\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
     let m;
     while ((m = linkRe.exec(html)) !== null) {
-      const inner = m[2] || "";
-      const label = this._decode((inner.match(/<span[^>]*>([\s\S]*?)<\/span>/) || [])[1] || "");
-      pushEp(this._abs(base, m[1]), label);
+      const epUrl = this._abs(m[1], base);
+      if (!epUrl || seen.has(epUrl)) continue;
+      seen.add(epUrl);
+      const num = Number((epUrl.match(/-(\d+)(?:[\/?#]|$)/) || [])[1] || 0);
+      const label = this._clean(m[2]) || (num ? "Episodio " + num : "Episodio");
+      episodes.push({ number: num, title: label, url: epUrl });
     }
 
-    // 2) Respaldo: array interno "var episodes = [...]" + slug de anime_info
-    if (episodes.length === 0) {
-      const slug = (html.match(/var\s+anime_info\s*=\s*\[[^\]]*?,\s*"([^"]+)"/) || [])[1];
-      const arr = (html.match(/var\s+episodes\s*=\s*(\[[^\]]*\])/) || [])[1];
-      if (slug && arr) {
+    // Respaldo: var anime_info + var episodes del propio HTML.
+    if (!episodes.length) {
+      const slug = (html.match(/var\s+anime_info\s*=\s*\[[^\]]*?,\s*"([^"]+)"/i) || [])[1];
+      const arrRaw = (html.match(/var\s+episodes\s*=\s*(\[[^\]]*\])/i) || [])[1];
+      if (slug && arrRaw) {
         try {
-          for (const n of JSON.parse(arr)) pushEp(`${base}/ver/${slug}-${n}`, `Episodio ${n}`);
+          const nums = JSON.parse(arrRaw);
+          if (Array.isArray(nums)) {
+            for (const n of nums) {
+              const epUrl = base + "/ver/" + slug + "-" + n;
+              if (seen.has(epUrl)) continue;
+              seen.add(epUrl);
+              episodes.push({ number: Number(n) || 0, title: "Episodio " + n, url: epUrl });
+            }
+          }
         } catch (_) {}
       }
     }
 
-    episodes.sort((a, b) => a._n - b._n);
+    episodes.sort((a, b) => a.number - b.number);
 
-    return {
-      title: title || "",
-      cover: cover || "",
-      desc: desc || "",
-      episodes: [
-        {
-          title: "Episodios",
-          urls: episodes.map((e) => ({ name: e.name, url: e.url })),
-        },
-      ],
-    };
+    return { title, cover, description, status, genres, url: pageUrl, episodes };
   }
 
   // ---------- reproducción ----------
 
-  _refererFor(url) {
-    if (!url) return "";
-    if (url.includes("yourupload.com")) return "https://www.yourupload.com/";
-    if (url.includes("hqq.tv") || url.includes("netu")) return "https://hqq.tv/";
-    if (url.includes("ok.ru")) return "https://ok.ru/";
-    if (url.includes("streamsb") || url.includes("sbfull") || url.includes("sbplay"))
-      return "https://streamsb.com/";
-    if (url.includes("fembed") || url.includes("anime789")) return "https://www.fembed.com/";
-    if (url.includes("mp4upload")) return "https://www.mp4upload.com/";
-    if (url.includes("streamtape")) return "https://streamtape.com/";
-    if (url.includes("voe.sx")) return "https://voe.sx/";
-    if (url.includes("mega.nz")) return "https://mega.nz/";
-    return "https://tioanime.com/";
-  }
-
   async watch(url) {
-    try {
-      const direct = await this._extractByEmbedUrl(url);
-      if (direct && !direct.url.startsWith("error://")) return direct;
+    const base = await this._base();
+    const pageUrl = this._abs(url, base);
+    const html = await this._get(pageUrl, base + "/directorio");
+    if (!html || typeof html !== "string") return this._err("watch-page");
 
-      const base = await this._base();
-      const page = /^https?:\/\//i.test(url) ? url : base + url;
+    const servers = this._parseServers(html);
+    if (!servers.length) return this._err("no-servers");
 
-      if (!/\/ver\//.test(page)) {
-        return { type: "hls", url: "error://unsupported-server" };
-      }
+    const embedUrls = {};
+    const referers = {};
+    for (const s of servers) {
+      if (!s.name || !s.url) continue;
+      if (embedUrls[s.name]) continue;
+      embedUrls[s.name] = s.url;
+      referers[s.name] = this._refererFor(s.url);
+    }
 
-      const html = await this._get(page);
-      if (!html || typeof html !== "string") {
-        return { type: "hls", url: "error://extraction-failed" };
-      }
+    const names = this._orderNames(Object.keys(embedUrls));
+    const baseHeaders = {
+      "X-Servers": JSON.stringify(embedUrls),
+      "X-Server-Referers": JSON.stringify(referers),
+    };
 
-      const raw = (html.match(/var\s+videos\s*=\s*(\[[\s\S]*?\]\s*\])\s*;/) || [])[1];
-      if (!raw) return { type: "hls", url: "error://no-servers-found" };
-
-      let list = [];
+    for (const name of names) {
+      const embedUrl = embedUrls[name];
+      if (!embedUrl) continue;
+      let result = null;
       try {
-        list = JSON.parse(raw);
+        result = await this._extract(name, embedUrl);
       } catch (_) {
-        return { type: "hls", url: "error://no-servers-found" };
+        result = null;
       }
-
-      const embedUrls = {};
-      const referers = {};
-      for (const s of list) {
-        if (Array.isArray(s) && s[0] && s[1]) {
-          const embed = String(s[1]).replace(/\\\//g, "/");
-          embedUrls[s[0]] = embed;
-          referers[s[0]] = this._refererFor(embed);
-        }
-      }
-
-      const preferred = [
-        "YourUpload",
-        "Streamtape",
-        "Mp4Upload",
-        "Okru",
-        "Netu",
-        "HQQ",
-        "Voe",
-        "Mega",
-      ];
-      const allNames = [
-        ...preferred.filter((n) => embedUrls[n]),
-        ...Object.keys(embedUrls).filter((n) => !preferred.includes(n)),
-      ];
-
-      let primaryName = null;
-      let primaryResult = null;
-
-      for (const name of allNames) {
-        if (!embedUrls[name]) continue;
-        try {
-          const result = await this._extractByEmbedUrl(embedUrls[name]);
-          if (result && !result.url.startsWith("error://")) {
-            primaryName = name;
-            primaryResult = result;
-            break;
-          }
-        } catch (_) {}
-      }
-
-      if (!primaryName) {
+      if (result && result.url && !String(result.url).startsWith("error://")) {
         return {
-          type: "hls",
-          url: "error://no-playable-server",
+          type: result.type || "hls",
+          url: result.url,
           headers: {
-            "X-Servers": JSON.stringify(embedUrls),
-            "X-Server-Referers": JSON.stringify(referers),
-            "X-Primary-Server": allNames[0] || "",
+            ...(result.headers || {}),
+            "Referer": referers[name] || this._refererFor(embedUrl),
+            "X-Primary-Server": name,
+            ...baseHeaders,
           },
         };
       }
+    }
 
-      return {
-        type: "hls",
-        url: primaryResult.url,
-        headers: {
-          ...(primaryResult.headers || {}),
-          "Referer": referers[primaryName] || this._refererFor(embedUrls[primaryName]),
-          "X-Servers": JSON.stringify(embedUrls),
-          "X-Server-Referers": JSON.stringify(referers),
-          "X-Primary-Server": primaryName,
-        },
-      };
-    } catch (_) {
-      return { type: "hls", url: "error://extraction-failed" };
-    }
-  }
-
-  async _extractByEmbedUrl(embedUrl) {
-    if (!embedUrl || !/^https?:\/\//i.test(embedUrl)) {
-      return { type: "hls", url: "error://unsupported-server" };
-    }
-    if (embedUrl.includes("yourupload.com")) return this._watchYourUpload(embedUrl);
-    if (embedUrl.includes("hqq.tv") || embedUrl.includes("netu")) return this._watchNetu(embedUrl);
-    if (embedUrl.includes("ok.ru")) return this._watchOkru(embedUrl);
-    if (embedUrl.includes("mp4upload.com")) return this._watchMp4Upload(embedUrl);
-    if (embedUrl.includes("streamtape.com")) return this._watchStreamtape(embedUrl);
-    if (embedUrl.includes("voe.sx")) return this._watchVoe(embedUrl);
-    if (embedUrl.includes("mega.nz")) return this._watchMega(embedUrl);
-    return { type: "hls", url: "error://unsupported-server" };
-  }
-
-  async _watchYourUpload(embedUrl) {
-    const html = await this._get(embedUrl, "https://tioanime.com/");
-    if (!html || typeof html !== "string" || html.length < 100) {
-      return { type: "hls", url: "error://extraction-failed" };
-    }
-    const m = html.match(/file:\s*['"]?(https?:\/\/[^'"<>\s]+\.mp4[^'"<>\s]*)/);
-    if (!m) return { type: "hls", url: "error://extraction-failed" };
-    const videoUrl = m[1];
-    if (videoUrl.includes("novideo") || videoUrl.includes("/embed/")) {
-      return { type: "hls", url: "error://extraction-failed" };
-    }
+    // Nada extraíble: devolvemos la lista para que se elija a mano.
     return {
       type: "hls",
-      url: videoUrl,
-      headers: { Referer: "https://www.yourupload.com/" },
+      url: "error://no-playable-server",
+      headers: { ...baseHeaders, "X-Primary-Server": names[0] || "" },
     };
+  }
+
+  _orderNames(names) {
+    const used = new Set();
+    const ordered = [];
+    for (const re of PRIORITY) {
+      for (const n of names) {
+        if (used.has(n)) continue;
+        if (re.test(n) || re.test(this._hostOf(n))) {
+          used.add(n);
+          ordered.push(n);
+        }
+      }
+    }
+    for (const n of names) if (!used.has(n)) ordered.push(n);
+    return ordered;
+  }
+
+  _hostOf(name) {
+    return String(name || "");
+  }
+
+  _parseServers(html) {
+    const out = [];
+    const arr = (html.match(/var\s+videos\s*=\s*(\[[\s\S]*?\])\s*;/i) || [])[1];
+    if (!arr) return out;
+    const rowRe = /\[\s*"([^"]+)"\s*,\s*"([^"]+)"\s*(?:,\s*"?[^",\]]*"?\s*,\s*"?[^",\]]*"?\s*)?\]/g;
+    let m;
+    while ((m = rowRe.exec(arr)) !== null) {
+      const name = this._clean(m[1]);
+      const url = m[2].trim();
+      if (!name || !url) continue;
+      if (out.some((s) => s.name === name)) continue;
+      out.push({ name, url });
+    }
+    return out;
+  }
+
+  async _extract(name, embedUrl) {
+    const n = String(name || "").toLowerCase();
+    const u = String(embedUrl || "").toLowerCase();
+    if (u.includes("voe") || n.includes("voe")) return this._watchVoe(embedUrl);
+    if (u.includes("ok.ru") || u.includes("okru") || n.includes("okru")) return this._watchOkru(embedUrl);
+    if (u.includes("filemoon") || n.includes("filemoon")) return this._watchFilemoon(embedUrl);
+    if (u.includes("streamtape") || n.includes("streamtape")) return this._watchStreamtape(embedUrl);
+    if (u.includes("yourupload") || n.includes("yourupload")) return this._watchYourUpload(embedUrl);
+    if (u.includes("mp4upload") || n.includes("mp4upload")) return this._watchMp4Upload(embedUrl);
+    if (u.includes("dood") || n.includes("dood")) return this._watchDood(embedUrl);
+    if (u.includes("hqq") || u.includes("netu") || n.includes("netu") || n.includes("hqq"))
+      return this._watchNetu(embedUrl);
+    if (u.includes("mega.nz") || n.includes("mega")) return this._watchMega(embedUrl);
+    return this._watchGeneric(embedUrl, this._refererFor(embedUrl));
+  }
+
+  _fromHtml(html, referer) {
+    if (!html || typeof html !== "string") return null;
+    const hls =
+      html.match(/["']([^"']+\.m3u8[^"']*)["']/i) ||
+      html.match(/https?:\/\/[^"'\s<>]+\.m3u8[^"'\s<>]*/i);
+    if (hls) {
+      const url = hls[1] || hls[0];
+      if (/^https?:\/\//i.test(url)) {
+        return { type: "hls", url, headers: { "Referer": referer, "Origin": this._origin(referer) } };
+      }
+    }
+    const mp4 =
+      html.match(/["']([^"']+\.mp4[^"']*)["']/i) ||
+      html.match(/https?:\/\/[^"'\s<>]+\.mp4[^"'\s<>]*/i);
+    if (mp4) {
+      const url = mp4[1] || mp4[0];
+      if (/^https?:\/\//i.test(url)) {
+        return { type: "video", url, headers: { "Referer": referer, "Origin": this._origin(referer) } };
+      }
+    }
+    return null;
+  }
+
+  _origin(url) {
+    try {
+      return new URL(url).origin + "/";
+    } catch (_) {
+      return "";
+    }
   }
 
   async _watchVoe(embedUrl) {
-    const html = await this._get(embedUrl, "https://tioanime.com/");
-    if (!html || typeof html !== "string" || html.length < 100) {
-      return { type: "hls", url: "error://extraction-failed" };
+    let html = await this._get(embedUrl, "https://voe.sx/");
+    if (!html) return this._err("voe");
+    // Voe a veces redirige a /e/<id> por JS.
+    const redir = (html.match(/window\.location\.href\s*=\s*['"]([^'"]+)['"]/i) || [])[1];
+    if (redir && !/\.m3u8|\.mp4/i.test(redir)) {
+      const next = this._abs(redir, "https://voe.sx");
+      html = await this._get(next, embedUrl);
     }
-
-    const candidates = [];
-    const push = (u) => {
-      if (!u) return;
-      const clean = String(u).replace(/\\\//g, "/").replace(/\\/g, "");
-      if (!/^https?:\/\//i.test(clean)) return;
-      if (clean.includes("test-videos.co.uk")) return;
-      if (!/\.(m3u8|mp4)(\?|$)/i.test(clean)) return;
-      if (!candidates.includes(clean)) candidates.push(clean);
-    };
-
-    const patterns = [
-      /"hls"\s*:\s*"([^"]+)"/g,
-      /'hls'\s*:\s*'([^']+)'/g,
-      /"mp4"\s*:\s*"([^"]+)"/g,
-      /'mp4'\s*:\s*'([^']+)'/g,
-      /var\s+source\s*=\s*'([^']+)'/g,
-      /source\s*:\s*"([^"]+\.(?:m3u8|mp4)[^"]*)"/g,
-      /(https?:\/\/[^"'\s<>]+\.m3u8[^"'\s<>]*)/g,
-      /(https?:\/\/[^"'\s<>]+\.mp4[^"'\s<>]*)/g,
-    ];
-
-    for (const re of patterns) {
-      let m;
-      const r = new RegExp(re.source, "g");
-      while ((m = r.exec(html)) !== null) push(m[1]);
-    }
-
-    if (!candidates.length) return { type: "hls", url: "error://extraction-failed" };
-
-    const primary = candidates[0];
-    const result = {
-      type: "hls",
-      url: primary,
-      headers: {
-        Referer: "https://voe.sx/",
-        "User-Agent": UA,
-      },
-    };
-    if (candidates.length > 1) result.headers["X-Voe-Alts"] = JSON.stringify(candidates.slice(1));
-    return result;
-  }
-
-  async _watchMega(embedUrl) {
-    const fileUrl = embedUrl.replace("/embed/", "/file/");
-    return {
-      type: "hls",
-      url: embedUrl,
-      headers: {
-        Referer: "https://mega.nz/",
-        "X-Mega-File": fileUrl,
-      },
-    };
-  }
-
-  async _watchNetu(embedUrl) {
-    const mirrors = [embedUrl];
-    if (embedUrl.includes("hqq.tv")) mirrors.push(embedUrl.replace("hqq.tv", "hqq.net"));
-    if (embedUrl.includes("netu.ac")) mirrors.push(embedUrl.replace("netu.ac", "hqq.tv"));
-    if (embedUrl.includes("netu.tv")) mirrors.push(embedUrl.replace("netu.tv", "hqq.tv"));
-
-    for (const mirrorUrl of mirrors) {
-      let html;
-      try {
-        html = await this._get(mirrorUrl, "https://tioanime.com/");
-      } catch (_) {
-        continue;
-      }
-      if (!html || typeof html !== "string" || html.length < 100) continue;
-
-      const patterns = [
-        /'(https?:\/\/[^']+\.m3u8[^']*)'/g,
-        /"(https?:\/\/[^"]+\.m3u8[^"]*)"/g,
-        /file:\s*["']?(https?:\/\/[^"'<>\s]+\.m3u8[^"'<>\s]*)/g,
-        /source\s*[=:]\s*["']?(https?:\/\/[^"'<>\s]+\.m3u8[^"'<>\s]*)/g,
-        /url:\s*["'](https?:\/\/[^"']+\.m3u8[^"']*)/g,
-        /'(https?:\/\/[^']+\.mp4[^']*)'/g,
-        /"(https?:\/\/[^"]+\.mp4[^"]*)"/g,
-      ];
-
-      const found = [];
-      const seen = new Set();
-      for (const pattern of patterns) {
-        let m;
-        const re = new RegExp(pattern.source, "g");
-        while ((m = re.exec(html)) !== null) {
-          const u = m[1].replace(/\\/g, "");
-          if (
-            !seen.has(u) &&
-            !u.includes("undefined") &&
-            !u.includes("null") &&
-            u.startsWith("http")
-          ) {
-            seen.add(u);
-            found.push(u);
-          }
-        }
-      }
-      if (found.length === 0) continue;
-
-      const primary = found[0];
-      const cdnReferer =
-        primary.includes("cfglobalcdn.com") ||
-        primary.includes("netu") ||
-        primary.includes("hqq")
-          ? "https://hqq.tv/"
-          : "https://tioanime.com/";
-
-      const result = {
-        type: "hls",
-        url: primary,
-        headers: {
-          "Referer": cdnReferer,
-          "Origin": cdnReferer.replace(/\/$/, ""),
-          "User-Agent": UA,
-        },
-      };
-      if (found.length > 1) result.headers["X-Netu-Alts"] = JSON.stringify(found.slice(1));
-      return result;
-    }
-
-    return { type: "hls", url: "error://extraction-failed" };
+    return (
+      this._fromHtml(html, embedUrl) ||
+      this._err("voe")
+    );
   }
 
   async _watchOkru(embedUrl) {
-    const html = await this._get(embedUrl, "https://tioanime.com/");
-    if (!html || typeof html !== "string" || html.length < 100) {
-      return { type: "hls", url: "error://extraction-failed" };
+    const html = await this._get(embedUrl, "https://ok.ru/");
+    if (!html) return this._err("okru");
+    const hls =
+      html.match(/hlsMasterPlaylistUrl\\?"\s*:\s*\\?"([^"\\]+)/i) ||
+      html.match(/hlsMasterPlaylistUrl"\s*:\s*"([^"]+)/i);
+    if (hls && hls[1]) {
+      const url = hls[1].replace(/\\\//g, "/");
+      return { type: "hls", url, headers: { "Referer": embedUrl, "Origin": "https://ok.ru/" } };
     }
-    const m = html.match(/"hlsMasterPlaylistUrl":"([^"]+)"/);
-    if (m) {
-      return {
-        type: "hls",
-        url: m[1].replace(/\\/g, ""),
-        headers: { Referer: "https://ok.ru/" },
-      };
+    const mp4 =
+      html.match(/\\?"url\\?"\s*:\s*\\?"(https:[^"\\]+\.mp4[^"\\]*)/i) ||
+      html.match(/"url"\s*:\s*"(https:[^"]+\.mp4[^"]*)"/i);
+    if (mp4 && mp4[1]) {
+      const url = mp4[1].replace(/\\\//g, "/");
+      return { type: "video", url, headers: { "Referer": embedUrl, "Origin": "https://ok.ru/" } };
     }
-    const mp4 = html.match(/"mp4":\s*\[[\s\S]*?"src":"([^"]+)"/);
-    if (mp4) {
-      return {
-        type: "hls",
-        url: mp4[1].replace(/\\/g, ""),
-        headers: { Referer: "https://ok.ru/" },
-      };
-    }
-    return { type: "hls", url: "error://extraction-failed" };
+    return this._err("okru");
   }
 
-  async _watchMp4Upload(embedUrl) {
-    const html = await this._get(embedUrl, "https://tioanime.com/");
-    if (!html || typeof html !== "string" || html.length < 100) {
-      return { type: "hls", url: "error://extraction-failed" };
-    }
-    const m = html.match(/src:\s*"(https?:\/\/[^"]+\.mp4[^"]*)"/);
-    if (!m) return { type: "hls", url: "error://extraction-failed" };
+  async _watchFilemoon(embedUrl) {
+    const html = await this._get(embedUrl, this._refererFor(embedUrl));
+    const m =
+      (html && html.match(/file\s*:\s*["']([^"']+)["']/i)) ||
+      (html && html.match(/sources\s*:\s*\[\s*\{\s*file\s*:\s*["']([^"']+)["']/i));
+    if (!m || !m[1]) return this._err("filemoon");
+    const url = m[1].replace(/\\\//g, "/");
     return {
-      type: "hls",
-      url: m[1],
-      headers: { Referer: "https://www.mp4upload.com/" },
+      type: /\.m3u8/i.test(url) ? "hls" : "video",
+      url,
+      headers: { "Referer": embedUrl, "Origin": this._origin(embedUrl) },
     };
   }
 
   async _watchStreamtape(embedUrl) {
-    const html = await this._get(embedUrl, "https://tioanime.com/");
-    if (!html || typeof html !== "string" || html.length < 100) {
-      return { type: "hls", url: "error://extraction-failed" };
+    const html = await this._get(embedUrl, "https://streamtape.com/");
+    if (!html) return this._err("streamtape");
+    let link =
+      (html.match(/id=["']ideoolink["'][^>]*>([^<]+)</i) || [])[1] ||
+      (html.match(/id=["']robotlink["'][^>]*>([^<]+)</i) || [])[1];
+    if (!link) return this._err("streamtape");
+    link = link.replace(/^\s+|\s+$/g, "");
+    if (link.includes("' + '")) {
+      const parts = link.split("' + '").map((p) => p.replace(/['"]/g, ""));
+      link = parts.join("");
     }
-    const m = html.match(/id="ideoooolink"[^>]*>([^<]+)<\/a>/);
-    if (m) {
-      return {
-        type: "hls",
-        url: "https:" + m[1].trim(),
-        headers: { Referer: "https://streamtape.com/" },
-      };
+    if (link.startsWith("//")) link = "https:" + link;
+    if (!/^https?:\/\//i.test(link)) link = "https:" + link;
+    return {
+      type: "video",
+      url: link,
+      headers: { "Referer": embedUrl, "Origin": "https://streamtape.com/" },
+    };
+  }
+
+  async _watchYourUpload(embedUrl) {
+    const html = await this._get(embedUrl, "https://www.yourupload.com/");
+    if (!html) return this._err("yourupload");
+    const m =
+      (html.match(/file\s*:\s*["']?(https?:\/\/[^'"<>\s]+\.mp4[^'"<>\s]*)/i) ||
+      (html.match(/["'](https?:\/\/[^"'<>\s]+\.mp4[^"'<>\s]*)/i)));
+    const url = m && (m[1] || m[0]);
+    if (!url) return this._err("yourupload");
+    return {
+      type: "video",
+      url,
+      headers: { "Referer": embedUrl, "Origin": "https://www.yourupload.com/" },
+    };
+  }
+
+  async _watchMp4Upload(embedUrl) {
+    const html = await this._get(embedUrl, "https://www.mp4upload.com/");
+    if (!html) return this._err("mp4upload");
+    const m =
+      (html.match(/src\s*:\s*["'](https?:\/\/[^"']+\.mp4[^"']*)/i) ||
+      (html.match(/["'](https?:\/\/[^"']+\.mp4[^"']*)/i)));
+    const url = m && (m[1] || m[0]);
+    if (!url) return this._err("mp4upload");
+    return {
+      type: "video",
+      url,
+      headers: { "Referer": embedUrl, "Origin": "https://www.mp4upload.com/" },
+    };
+  }
+
+  async _watchDood(embedUrl) {
+    const html = await this._get(embedUrl, this._refererFor(embedUrl));
+    if (!html) return this._err("dood");
+    const pass = (html.match(/pass_md5\/([^"']+)/i) || [])[1];
+    const token = (html.match(/token=([^"'&]+)/i) || [])[1];
+    if (!pass) return this._fromHtml(html, embedUrl) || this._err("dood");
+    const host = this._origin(embedUrl).replace(/\/$/, "");
+    const tokenPath = pass.split("/").slice(0, -1).join("/");
+    const body = await this._get(host + "/pass_md5/" + pass, embedUrl);
+    if (!body || typeof body !== "string") return this._err("dood");
+    const rnd = Math.random().toString(36).slice(2, 12);
+    const url = body.trim() + rnd + (token ? "?token=" + token + "&" : "?") + "ip=0.0.0.0&token=" + (token || tokenPath);
+    return {
+      type: "video",
+      url,
+      headers: { "Referer": embedUrl, "Origin": host + "/" },
+    };
+  }
+
+  async _watchNetu(embedUrl) {
+    const vid = (embedUrl.match(/[?&]vid=([A-Za-z0-9]+)/) || [])[1];
+    let html = "";
+    try {
+      html = await this.request("", {
+        method: "POST",
+        headers: {
+          "Miru-Url": "https://hqq.tv/player/embed_player.php?vid=" + (vid || ""),
+          "Content-Type": "application/x-www-form-urlencoded",
+          "User-Agent": UA,
+          "Referer": embedUrl,
+          "Origin": "https://hqq.tv",
+        },
+        body: "vid=" + (vid || "") + "&ads=1&b=1",
+      });
+    } catch (_) {}
+    if (!html) html = await this._get(embedUrl, "https://hqq.tv/");
+    const m =
+      (html && html.match(/file\s*:\s*["']([^"']+\.m3u8[^"']*)/i)) ||
+      (html && html.match(/file\s*:\s*["']([^"']+)["']/i));
+    if (!m || !m[1]) return this._err("netu");
+    const url = m[1].replace(/\\\//g, "/");
+    return {
+      type: /\.m3u8/i.test(url) ? "hls" : "video",
+      url,
+      headers: { "Referer": embedUrl, "Origin": "https://hqq.tv" },
+    };
+  }
+
+  // Mega: embed HTML cifrado. Sigue al último recurso, pero si otro servidor
+  // responde antes, esto ni se ejecuta.
+  async _watchMega(embedUrl) {
+    const html = await this._get(embedUrl, "https://mega.nz/");
+    if (!html) return this._err("mega");
+    // Si por casualidad el embed ya trae una pista directa, la usamos.
+    const direct = this._fromHtml(html, embedUrl);
+    if (direct) return direct;
+    // Si no, intentamos el endpoint público de metadatos.
+    const id = (embedUrl.match(/\/embed\/(?:file\/)?([^!\/]+)/) || [])[1];
+    if (id) {
+      try {
+        const api = "https://g.api.mega.co.nz/cs?id=0&n=" + encodeURIComponent(id);
+        const json = await this.request("", {
+          headers: { "Miru-Url": api, "User-Agent": UA, "Referer": "https://mega.nz/" },
+        });
+        const text = typeof json === "string" ? json : JSON.stringify(json || "");
+        const g = (text.match(/"g"\s*:\s*"([^"]+)"/) || [])[1];
+        if (g && /^https?:\/\//i.test(g)) {
+          return { type: "video", url: g, headers: { "Referer": "https://mega.nz/" } };
+        }
+      } catch (_) {}
     }
-    const m2 = html.match(/&token=[^&"]+&expires=[^"]+/);
-    const base = html.match(/\/\/[^"]*streamtape[^/]+\/get_video\?/);
-    if (m2 && base) {
-      return {
-        type: "hls",
-        url: "https:" + base[0] + m2[0],
-        headers: { Referer: "https://streamtape.com/" },
-      };
+    return this._err("mega");
+  }
+
+  async _watchGeneric(embedUrl, referer) {
+    const html = await this._get(embedUrl, referer);
+    if (!html) return this._err("generic");
+    const direct = this._fromHtml(html, embedUrl);
+    if (direct) return direct;
+    // Un nivel de iframe anidado.
+    const iframe =
+      (html.match(/<iframe[^>]+src=["']([^"']+)["']/i) || [])[1] ||
+      (html.match(/<embed[^>]+src=["']([^"']+)["']/i) || [])[1];
+    if (iframe) {
+      const next = this._abs(iframe, this._origin(embedUrl));
+      if (next && next !== embedUrl) {
+        const inner = await this._get(next, embedUrl);
+        const found = this._fromHtml(inner, next);
+        if (found) return found;
+      }
     }
-    return { type: "hls", url: "error://extraction-failed" };
+    return this._err("generic");
   }
 }
