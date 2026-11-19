@@ -2041,5 +2041,19 @@
         "url":  "https://raw.githubusercontent.com/jephersonRD/JiruHub/main/extensions/jiruhublatino.js",
         "version":  "v0.3.4",
         "webSite":  "https://www.1024terabox.com"
+    },
+    {
+        "author":  "JephMD",
+        "description":  "Anime en Español Latino vía latanime.org",
+        "icon":  "https://raw.githubusercontent.com/jephersonRD/JiruHub/main/icons/jiruplus.png",
+        "lang":  "es",
+        "license":  "MIT",
+        "name":  "JiruPlus",
+        "nsfw":  "false",
+        "package":  "latanime",
+        "type":  "bangumi",
+        "url":  "https://raw.githubusercontent.com/jephersonRD/JiruHub/main/extensions/jiruplus.js",
+        "version":  "v0.1.6",
+        "webSite":  "https://latanime.org"
     }
 ]
