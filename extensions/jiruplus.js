@@ -1,6 +1,6 @@
-﻿// ==MiruExtension==
+// ==MiruExtension==
 // @name         JiruPlus
-// @version      v0.1.6
+// @version      v0.1.7
 // @author       JephMD
 // @lang         es
 // @license      MIT
@@ -865,3 +865,8 @@ export default class extends Extension {
       if (t.indexOf(key) !== -1) {
         const c = t.match(/content=["']([^"']*)["']/i);
         if (c) return c[1];
+      }
+    }
+    return "";
+  }
+}
